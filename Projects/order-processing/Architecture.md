@@ -1,6 +1,7 @@
 ---
 project: order-processing
 created: 2026-06-25
+updated: 2026-06-25
 tags: [project, architecture]
 ---
 
@@ -71,10 +72,15 @@ app/
   трансформация, действия, файлы, PDF, шаблоны.
 - `order_validators/` — валидация тарифов и тех. параметров:
   - `rules_manager.py` — `RuleManager` (базовый) и наследники
-    (`CloudMDMAdminRuleManager` и др.); методы `validate` / `calculate` /
-    `get_excluded_tp` для правил тех. параметров (`TechParamsRulesSchema`).
-  - `tariffs_validator.py`, `tech_params_validator.py`,
-    `custom_tariff_validators.py`, `constants.py`, `utils.py`.
+    (`CloudMDMAdminRuleManager`, `PostgreSQLRuleManager`, `DisableFieldRuleManager`);
+    методы `validate` / `calculate` / `get_excluded_tp` / `integer_only_tariff_pks`
+    для правил тех. параметров (`TechParamsRulesSchema`). Расчёты используют
+    `quantity_value` (Decimal-fallback), не устаревшее `quantity`.
+  - `tariffs_validator.py` — диапазон и кастомные валидаторы (через `quantity_value`).
+  - `tech_params_validator.py` — `validate_integer_only_tariffs()` (перед `validate_rules()`)
+    запрещает дробное количество для integer-доменных тарифов (MDM/PG).
+  - `custom_tariff_validators.py`, `constants.py`, `utils.py`.
+  - Дробное количество тарифа — см. [[Fractional-quantity]].
 - `preapproved_order_service.py` — создание предварительно согласованного заказа
   (см. [[Preapproved-order]]).
 

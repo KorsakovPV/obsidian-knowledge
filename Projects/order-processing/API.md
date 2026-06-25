@@ -1,6 +1,7 @@
 ---
 project: order-processing
 created: 2026-06-25
+updated: 2026-06-25
 tags: [project, api]
 ---
 
@@ -43,7 +44,23 @@ tags: [project, api]
 
 > Также есть `endpoints/regions.py`. Обработка ошибок и примеры ответов —
 > `api/api_v2/error_handling.py`, `example_responses.py`, `exceptions.py`
-> (в т. ч. `RulesTPValidationError` для валидации тех. параметров).
+> (в т. ч. `RulesTPValidationError` для валидации тех. параметров,
+> `FractionalQuantityNotAllowedError` — см. ниже).
+
+## Количество тарифа (quantity / quantity_decimal)
+
+Схема тарифа заказа — `OrderTariffsSchema` (`app/schemas/orders.py`), также
+`TariffsToAPISchema` (`schemas/v2/tariffs.py`) и схема продюсера (`schemas/v2/producers.py`).
+
+- `quantity_decimal: str` — **канонический** источник количества, дробное строкой
+  (напр. `"0.5"` — ИТ-специалист за 0,5 часа). В Swagger есть `description`/`example`.
+- `quantity: int` — **DEPRECATED** (помечено в OpenAPI), оставлено для обратной
+  совместимости; будет удалено после перехода всех потребителей.
+- На вход можно слать только `quantity_decimal`; целочисленный `quantity`
+  бэкфиллится/игнорируется. Для расчётов/валидации в коде используется property
+  `quantity_value` (Decimal-fallback). Подробности — [[Fractional-quantity]].
+- Для integer-доменных тарифов (правила Cloud MDM, PostgreSQL) дробное количество
+  запрещено — возвращается `FractionalQuantityNotAllowedError`.
 
 ## Формы заказов / TCO (`urls/`)
 
