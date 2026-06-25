@@ -59,3 +59,5 @@ taskiq worker   --fs-discover --tasks-pattern 'app/tasks/**/*.py' tasks.broker:b
 
 - [[Preapproved-order]] — DFDEV-1908: создание предварительно согласованного
   заказа из внешнего сервиса (Comet).
+- [[Fractional-quantity]] — поэтапная поддержка дробного количества в тарифах
+  (`quantity_decimal`, Decimal-fallback, запрет дробного для MDM/PG).
