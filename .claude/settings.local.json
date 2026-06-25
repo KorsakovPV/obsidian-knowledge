@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p Inbox Notes Daily Attachments)",
+      "Bash(touch Inbox/.gitkeep Notes/.gitkeep Daily/.gitkeep Attachments/.gitkeep)"
+    ]
+  }
+}
