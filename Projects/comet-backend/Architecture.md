@@ -64,7 +64,12 @@ app/
   например, callbacks/health). OpenAPI помечает защищённые пути «замком» через
   кастомный `custom_openapi()` в `main.py`.
 - Ролевая модель ЛКМ (LKM): роли `manager / sales_lead / director / admin`,
-  таблицы `lkm_users`, `lkm_roles`, `lkm_permissions` и связки. Подробная
+  таблицы `lkm_users`, `lkm_roles`, `lkm_permissions` и связки. `/auth/user`
+  автоматически создаёт пользователя с ролью `manager` при первом входе. Для
+  остальных защищённых ручек middleware кладёт LKM-пользователя и effective
+  permissions в request context; если записи в `lkm_users` нет — возвращается 403.
+  Проверки действий сделок/офферов используют `deal_actions` / `offer_actions`,
+  которые учитывают permissions, когда они переданы в context. Подробная
   спецификация — в `docs/lkm_role_model.md` репозитория.
 
 ## Фоновые задачи
