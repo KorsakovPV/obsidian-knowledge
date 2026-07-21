@@ -1,6 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
+updated: 2026-07-21
 tags: [project, architecture, fastapi]
 ---
 
@@ -18,9 +19,10 @@ app/
 ├── main.py          # сборка FastAPI: middleware, CORS, Sentry, OpenAPI, lifespan
 ├── core/            # config.py (pydantic-settings), log_settings.py
 ├── api/             # HTTP-слой: роутеры по версиям и доменам (см. [[API]])
-│   ├── api_router.py    # /api + /healthcheck
-│   ├── v1/v1_router.py  # сборка всех роутеров /v1
-│   ├── docs/            # теги, примеры запросов/ответов для OpenAPI
+│   ├── api_router.py       # /api + /healthcheck
+│   ├── v1/v1_router.py     # сборка всех роутеров /v1
+│   ├── dependencies/       # permissions.py — FastAPI-зависимости проверки прав
+│   ├── docs/               # теги, примеры запросов/ответов для OpenAPI
 │   └── exception_handlers.py
 ├── middleware/      # auth_middleware.py, skip_paths.py
 ├── services/        # бизнес-логика и внешние интеграции
@@ -36,10 +38,14 @@ app/
 
 1. **Middleware** (`AuthMiddleware`) проверяет JWT через `AuthService`/Keycloak,
    кладёт пользователя в `request.scope["user"]`. Публичные пути пропускаются по
-   `middleware/skip_paths.py:is_skipped`. При обновлении access-токена он
-   возвращается клиенту в cookie.
-2. **Роутер** (`app/api/v1/...`) валидирует вход Pydantic-схемой, вызывает сервис
-   через `Depends(get_*_service)`.
+   `middleware/skip_paths.py:is_skipped`. Затем по `ad_login` подтягивает
+   LKM-пользователя и его эффективные права и кладёт в `request.state`
+   (`lkm_user`, `lkm_role`, `lkm_permissions`, `lkm_is_permissions_extended`); если
+   записи в `lkm_users` нет — 403. При обновлении access-токена он возвращается
+   клиенту в cookie. Подробности проверки прав — в разделе «Права доступа».
+2. **Роутер** (`app/api/v1/...`) валидирует вход Pydantic-схемой, проверяет права
+   через `Depends(require_permission(...))` и вызывает сервис через
+   `Depends(get_*_service)`.
 3. **Сервис** (`app/services/...`) выполняет бизнес-логику и обращается к CRUD
    и/или внешним системам.
 4. **CRUD** (`app/cruds/...`) работает с БД через async SQLAlchemy-сессию.
@@ -68,9 +74,37 @@ app/
   автоматически создаёт пользователя с ролью `manager` при первом входе. Для
   остальных защищённых ручек middleware кладёт LKM-пользователя и effective
   permissions в request context; если записи в `lkm_users` нет — возвращается 403.
-  Проверки действий сделок/офферов используют `deal_actions` / `offer_actions`,
-  которые учитывают permissions, когда они переданы в context. Подробная
-  спецификация — в `docs/lkm_role_model.md` репозитория.
+
+## Права доступа (permissions)
+
+Разделение ответственности: **middleware загружает** права, **ручка проверяет**.
+
+- **Загрузка** (`app/middleware/auth_middleware.py`): на каждый запрос
+  `AuthMiddleware` через `lkm_user_service.get_request_lkm_data(ad_login)` считает
+  эффективный набор прав (**пермиссии роли ∪ персональные пермиссии**, UNION-запрос)
+  и кладёт в `request.state.lkm_permissions` (+ `lkm_role`, `lkm_user`,
+  `lkm_is_permissions_extended`).
+- **Проверка** (`app/api/dependencies/permissions.py`) — FastAPI-зависимости,
+  навешиваемые на ручки через `Depends(...)`:
+  - `require_permission(Permission.X)` — нужен конкретный пермиссен, иначе
+    `LkmForbiddenError` (403);
+  - `require_any_permission(Permission.X, Y, ...)` — достаточно любого из списка;
+  - `require_admin` — только роль `UserRole.ADMIN` (временный MVP-механизм для
+    справочников/внутренних ручек, помечен TODO — исключение из принципа «проверять
+    пермиссии, а не роль»);
+  - `get_lkm_permissions(request)` — прочитать набор без проверки (решение в теле).
+- **Каталог**: `Permission(StrEnum)` (16 пермиссий) и `UserRole(StrEnum)`
+  (`app/models/lkm_permission.py`, `app/models/lkm_user.py`). Пермиссии и роли, их
+  наборы (`lkm_role_permissions`) и связки сейчас **засеваются миграцией**
+  (`migrations/versions/..._add_lkm_permissions.py`).
+- **Действия сделок/офферов**: доступность конкретных действий (edit/delete/…)
+  дополнительно вычисляется resolver'ами `deal_actions` / `offer_actions` с учётом
+  состояния согласования — см. раздел «Согласование» и [[Offer Actions Rules]].
+
+> [!note] Код vs. целевой дизайн
+> Реализация — MVP-срез: 4 роли, 16 пермиссий, сид через миграцию, `require_admin`
+> временно проверяет имя роли. Целевая модель (8 ролей, синк пермиссий из enum на
+> старте, guard'ы только по пермиссиям) описана в исследовании [[LKM Role Model]].
 
 ## Фоновые задачи
 
@@ -93,7 +127,7 @@ app/
   (`context.py` — состояние, `resolvers.py` — правила, `manager.py` — оркестрация).
   Пример: `EditDealActionResolver` блокирует редактирование, пока согласование
   `REQUIRED`, и сбрасывает его в `DRAFT` при изменении одобренного оффера.
-  Правила офферов задокументированы в `docs/offer_actions_rules.md`.
+  Правила офферов задокументированы в [[Offer Actions Rules]].
 
 ## Внешние интеграции (`app/services/`)
 

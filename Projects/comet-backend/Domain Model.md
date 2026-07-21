@@ -1,6 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
+updated: 2026-07-21
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -93,9 +94,11 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 
 - `lkm_users`: `ad_login`, `full_name`, `role` (`UserRole`:
   `manager` | `sales_lead` | `director` | `admin`), `first_login_at?`, `created_by_admin?`.
-- `lkm_permissions` (`codename`, `name`), `lkm_roles` (`codename`, `name`).
-- Связки: `lkm_role_permissions`, `lkm_user_permissions`.
-- Полная спецификация прав — `docs/lkm_role_model.md` в репозитории кода.
+- `lkm_permissions` (`codename`, `name`, 16 записей), `lkm_roles` (`codename`, `name`).
+- Связки: `lkm_role_permissions` (набор прав роли), `lkm_user_permissions` (персональные права).
+- Пермиссии/роли и наборы засеваются миграцией `..._add_lkm_permissions.py`.
+- Эффективные права = пермиссии роли ∪ персональные права. Полная спецификация —
+  в исследовании [[LKM Role Model]]; проверка прав — в [[Architecture]].
 
 ---
 
