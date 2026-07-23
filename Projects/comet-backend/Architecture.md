@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-21
+updated: 2026-07-23
 tags: [project, architecture, fastapi]
 ---
 
@@ -69,7 +69,7 @@ app/
 - `AuthMiddleware` применяется ко всем путям, кроме «skipped» (публичные ручки —
   например, callbacks/health). OpenAPI помечает защищённые пути «замком» через
   кастомный `custom_openapi()` в `main.py`.
-- Ролевая модель ЛКМ (LKM): роли `manager / sales_lead / director / admin`,
+- Ролевая модель ЛКМ (LKM): роли `manager / presale / sales_lead / sales_director / finance_director / product_owner / lawyer / admin`,
   таблицы `lkm_users`, `lkm_roles`, `lkm_permissions` и связки. `/auth/user`
   автоматически создаёт пользователя с ролью `manager` при первом входе. Для
   остальных защищённых ручек middleware кладёт LKM-пользователя и effective
@@ -93,7 +93,7 @@ app/
     справочников/внутренних ручек, помечен TODO — исключение из принципа «проверять
     пермиссии, а не роль»);
   - `get_lkm_permissions(request)` — прочитать набор без проверки (решение в теле).
-- **Каталог**: `Permission(StrEnum)` (16 пермиссий) и `UserRole(StrEnum)`
+- **Каталог**: `Permission(StrEnum)` (22 пермиссии) и `UserRole(StrEnum)`
   (`app/models/lkm_permission.py`, `app/models/lkm_user.py`). Пермиссии и роли, их
   наборы (`lkm_role_permissions`) и связки сейчас **засеваются миграцией**
   (`migrations/versions/..._add_lkm_permissions.py`).
@@ -101,10 +101,12 @@ app/
   дополнительно вычисляется resolver'ами `deal_actions` / `offer_actions` с учётом
   состояния согласования — см. раздел «Согласование» и [[Offer Actions Rules]].
 
-> [!note] Код vs. целевой дизайн
-> Реализация — MVP-срез: 4 роли, 16 пермиссий, сид через миграцию, `require_admin`
-> временно проверяет имя роли. Целевая модель (8 ролей, синк пермиссий из enum на
-> старте, guard'ы только по пермиссиям) описана в исследовании [[LKM Role Model]].
+> [!note] Код vs. БТ02
+> Реализация уже содержит 8 ролей и 22 пермиссии БТ02, а сид БТ02 применён через
+> миграцию `2026_07_21_1200-f1a2b3c4d5e6_bt02_roles_permissions.py`. Оставшиеся
+> расхождения с целевой моделью: `require_admin` проверяет роль, roles всё ещё
+> enum в коде, нет контроля единоличных permissions, отключён фильтр ephemeral,
+> pre-tariffs без permission guards. Подробно — [[BT02 Role Model Gaps]].
 
 ## Фоновые задачи
 

@@ -1,8 +1,9 @@
 ---
 project: comet-backend
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-23
 source: docs/lkm_role_model.md
+source_pdf: Attachments/БТ02_ Ролевая модель - Datafort DEV - Confluence.pdf
 tags: [project, research, lkm, permissions, rbac]
 ---
 
@@ -10,13 +11,13 @@ tags: [project, research, lkm, permissions, rbac]
 
 #research #project
 
-> [!note] Целевой дизайн vs. текущий код
-> Эта заметка — перенос исследования БТ02 (целевая модель, **8 ролей**, синк
-> пермиссий из enum на старте). Текущий код в репозитории реализует **MVP-срез**:
-> 4 роли (`manager / sales_lead / director / admin`), 16 пермиссий, сид ролей и
-> пермиссий через **миграцию** (а не enum-sync на старте), а guard `require_admin`
-> пока проверяет имя роли. Актуальную реализацию см. в [[Architecture]] (раздел
-> «Права доступа») и связанной [[Offer Actions Rules]].
+> [!note] PDF и состояние реализации
+> Эта заметка переносит БТ02 из PDF [[БТ02_ Ролевая модель - Datafort DEV - Confluence.pdf]].
+> На 2026-07-23 код уже содержит 8 ролей и 22 permissions БТ02, но часть целевого
+> дизайна остаётся нереализованной: `require_admin` всё ещё role-based, нет контроля
+> единоличных permissions, отключён фильтр ephemeral-пользователей, pre-tariff ручки
+> не закрыты permissions, actions в API-ответах строятся без request permissions.
+> Gap-тикеты вынесены в [[BT02 Role Model Gaps]].
 
 Источник: БТ02 «Ролевая модель» (Жуков К.С.), обновление от 15.07.2026.
 
@@ -24,6 +25,32 @@ tags: [project, research, lkm, permissions, rbac]
 > согласование КП разбито на отдельные стадии (по одной пермиссии на согласующего).
 > Чек-лист администратора (раздел 5.2) будет приведён аналитиком в соответствие с
 > Таблицей 1.3, поэтому ориентируемся только на 1.3.
+
+## Состояние реализации на 2026-07-23
+
+Соответствует БТ02:
+
+- `UserRole` содержит 8 ролей БТ02: `manager`, `presale`, `sales_lead`,
+  `sales_director`, `finance_director`, `product_owner`, `lawyer`, `admin`.
+- `Permission` содержит 22 permissions, включая постадийные `approve_kp_*`,
+  `validate_bz`, `chat_with_approvers`, `chat_with_managers`, тарифные и
+  администраторские permissions.
+- Миграция `2026_07_21_1200-f1a2b3c4d5e6_bt02_roles_permissions.py` добавляет
+  новые роли/permissions и пересобирает `lkm_role_permissions` по БТ02.
+- `AuthMiddleware` кладёт effective permissions в request context, а основные
+  ручки сделок, офферов и управления пользователями используют permission guards.
+
+Не соответствует или требует реализации:
+
+- `require_admin` всё ещё проверяет имя роли `admin`, а не permission.
+- При назначении персональных permissions нет запрета менять собственную УЗ.
+- Для единоличных permissions нет проверки, что permission уже выдан другому пользователю.
+- `list_visible()` временно показывает ephemeral-пользователей, фильтр из БТ02 отключён.
+- Ручки pre-tariffs пока не закрыты permissions `create_tariff` / `approve_tariffs`.
+- Actions в API-ответах сделок/офферов строятся без permissions текущего пользователя.
+- Целевой принцип «роли — данные, не enum» пока не выполнен: в коде есть `UserRole` enum.
+
+Подробные gap-тикеты: [[BT02 Role Model Gaps]].
 
 ## Роли
 
@@ -259,6 +286,8 @@ insert-if-absent при инициализации). Изменение набо
 все стадии. Согласующие стадии директора по продажам, финансового директора и юриста
 единоличны (см. сноску ¹). Точная последовательность/условия прохождения стадий
 описываются в отдельном БТ по согласованию КП; здесь фиксируется только модель прав.
+
+Design note по реализации процесса: [[Sequential KP Approval]]. Декомпозиция: [[Sequential KP Approval Tickets]].
 
 ## Бизнес-правила
 

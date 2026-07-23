@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-21
+updated: 2026-07-23
 tags: [project, backend, fastapi, python]
 ---
 
@@ -56,12 +56,15 @@ python app/main.py            # uvicorn на localhost:8022
 - [[Architecture]] — слои приложения, middleware, права доступа, фоновые задачи, интеграции.
 - [[API]] — публичные HTTP-эндпоинты по доменам.
 - [[Domain Model]] — сущности БД (deal, offer, approval, …) и их связи.
+- [[Sequential KP Approval]] — дизайн последовательного согласования КП со skip/reassign/escalation.
 
 ## Исследования
 
 Перенесены из `docs/` репозитория (одностороннее зеркало, источник — код):
 
 - [[LKM Role Model]] — ролевая модель ЛКМ (БТ02): роли, пермиссии, RBAC + персональные права.
+- [[BT02 Role Model Gaps]] — тикеты по расхождениям БТ02 и текущей реализации.
+- [[Sequential KP Approval Tickets]] — декомпозиция реализации последовательного согласования КП.
 - [[Offer Actions Rules]] — правила доступности действий над сделкой/оффером по состоянию согласования.
 - [[Preapproved Order Integration]] — интеграция с Order Processing после согласования оффера (DFDEV-1908).
 
