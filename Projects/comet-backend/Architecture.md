@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-23
+updated: 2026-07-26
 tags: [project, architecture, fastapi]
 ---
 
@@ -122,6 +122,18 @@ app/
 - Модель `ApprovalModel` хранит статус (`draft/pending/answered/canceled`),
   решение (`approve/reject`), причину (`discount/product_rule`) и источник
   (`email` / `auto_related_deals` / `auto_rule`). См. [[Domain Model]].
+- Таблица `approval_stages` уже добавлена в модель и схемы как будущая основа
+  последовательного workflow: stage code, position, required permission, assignee,
+  stage token, skip/audit fields. На текущем коде отправка и приём email ещё работают
+  через legacy-поля `approval.approvers` и `approval.email_token`, а не через stage token.
+- `OfferService._build_approval_create_data()` пока создаёт draft approval с mock approver
+  и `reason_type=discount`; route builder стадий в текущем дереве не подключён.
+- `DealService.request_approval()` выбирает согласующего из JSON `approvers` по максимальному
+  `level`, формирует email и добавляет в письмо строки сравнения тарифов оффера с клиентскими
+  и классификаторными ценами.
+- `DealService.receive_mail()` валидирует payload входящего письма по `deal_id`,
+  `deal_number` и `approval.email_token`, после валидного ответа переводит approval в
+  `answered` и сохраняет решение/комментарий.
 - Ответы согласующих приходят по email и разбираются IMAP-поллером
   (`approval_email_composer.py`, `email_contents.py`, `email_transport.py`).
 - **Доступность действий** над сделкой/оффером вычисляется паттерном resolver'ов:

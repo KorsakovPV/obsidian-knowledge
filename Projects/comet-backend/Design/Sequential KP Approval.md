@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-23
+updated: 2026-07-26
 source: docs/lkm_role_model.md
 tags: [project, design, approval, lkm, rbac]
 ---
@@ -23,15 +23,15 @@ tags: [project, design, approval, lkm, rbac]
 5. `approve_kp_product_owner` — владелец продукта;
 6. `approve_kp_lawyer` — юрист.
 
-Текущая реализация не моделирует последовательность стадий. `approval` — одна запись
-на оффер, с одним общим `status`, `decision`, `email_token` и JSONB `approvers`.
+В текущем коде уже добавлена таблица `approval_stages` и соответствующие enum'ы
+`ApprovalStageCode` / `ApprovalStageStatus`, но orchestration ещё работает по legacy-модели:
 `DealService.request_approval()` выбирает одного согласующего через
-`max(approval.approvers, key=lambda approver: approver["level"])`, отправляет одно
-письмо и переводит весь approval в `pending`.
+`max(approval.approvers, key=lambda approver: approver["level"])`, отправляет одно письмо
+и переводит весь approval в `pending`. Ответ email ищется по `approval.email_token`, а не
+по token конкретной стадии.
 
-Это плохо масштабируется на БТ02: невозможно явно понять текущую стадию, хранить
-решение каждой стадии, пропустить этап, переназначить согласующего, отличить skip от
-approve и безопасно обработать старые email-token'ы.
+Оставшийся разрыв до БТ02 теперь не в схеме БД, а в workflow: нужно подключить builder
+маршрута, выбор assignee, stage-level token'ы и state machine стадий.
 
 ## Варианты реализации
 
@@ -118,7 +118,7 @@ fallback rules.
 
 ## Рекомендуемая модель
 
-Добавить таблицу `approval_stages`:
+Таблица `approval_stages` добавлена миграцией `2026_07_23_1200-a7b8c9d0e1f2_add_approval_stages.py`:
 
 ```sql
 CREATE TABLE approval_stages (
@@ -166,13 +166,22 @@ CREATE TABLE approval_stages (
 
 ## State machine
 
-Запуск:
+Целевой запуск:
 
 1. При создании/обновлении оффера builder строит маршрут стадий.
 2. Маршрут зависит от причины согласования: скидка, техническая возможность,
    нестандартные условия, тарифы и т.д.
 3. Не все 6 стадий обязательны для каждого КП.
 4. Первая стадия получает `pending`, token, `requested_at`, `due_at`; остальные — `waiting`.
+
+### Особые условия и юридическая стадия
+
+Особые условия — отдельное поле оффера `special_conditions`, а не значение,
+выведенное из скидки. Непустое после `strip()` значение добавляет в тот же маршрут
+одну обязательную стадию `lawyer` с пермиссией `approve_kp_lawyer`. Эта стадия
+дополняет, а не заменяет скидочные стадии: она ставится после них. Поэтому КП без
+скидки, но с особыми условиями, всё равно проходит один общий approval-процесс из
+юридической стадии. Пустое значение или `null` стадию не создаёт.
 
 Approve:
 

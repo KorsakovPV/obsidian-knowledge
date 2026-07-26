@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-23
+updated: 2026-07-26
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -16,7 +16,7 @@ PostgreSQL. Ниже основные таблицы и связи. Бизнес
 ## Связи (кратко)
 
 ```
-Deal 1───* Offer 1───0..1 Approval
+Deal 1───* Offer 1───0..1 Approval 1───* ApprovalStage
   │           └──────0..1 OfferOrder  (заказ в ОП)
   └──* DealAttachment
 
@@ -47,6 +47,8 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `technical_parameters` (JSONB), `tariffs` (JSONB) — тех. параметры и тарифы бланка заказа.
 - `created_by`, `updated_by?`.
 - Связи: `deal`, `approval` (0..1), `order` (0..1, `OfferOrder`).
+- Отдельного поля `special_conditions` в `offer` нет: особые условия есть в схемах продукта
+  (`ProductBaseSchema.special_conditions`) и заказа (`OrderOutSchema.special_conditions`).
 
 ## Approval — `approval`
 
@@ -59,6 +61,24 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `source` (`ApprovalSource`): `email` | `auto_related_deals` | `auto_rule`.
 - `approvers` (JSON-список), `requested_at?`, `decided_at?`.
 - `email_token?`, `email_token_expires_at?` — для подтверждения согласования по ссылке из письма.
+- Связь `stages` загружается как список `ApprovalStageModel`, отсортированный по `position`.
+
+## ApprovalStage — `approval_stages`
+
+Явная стадия последовательного согласования.
+
+- `approval_id` → `approval`, `stage_code` (`ApprovalStageCode`):
+  `presale` | `lead` | `sales_director` | `finance_director` | `product_owner` | `lawyer`.
+- `position` — порядковый номер стадии внутри approval; `required_permission` — permission,
+  необходимая для закрытия стадии.
+- `status` (`ApprovalStageStatus`): `waiting` | `pending` | `approved` | `rejected` |
+  `skipped` | `canceled`.
+- `assigned_user_id?` → `lkm_users`, `assigned_email?`, `requested_at?`, `due_at?`.
+- `decided_at?`, `decision?`, `decision_comment?`.
+- `email_token?`, `email_token_expires_at?` — stage-level token для будущего workflow.
+- `skipped_by_user_id?` → `lkm_users`, `skipped_at?`, `skip_reason?`.
+- Ограничения: уникальны `(approval_id, position)`, `(approval_id, stage_code)` и
+  `email_token`.
 
 ## OfferOrder — `offer_order`
 
