@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-26
+updated: 2026-07-27
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -47,21 +47,33 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `technical_parameters` (JSONB), `tariffs` (JSONB) — тех. параметры и тарифы бланка заказа.
 - `created_by`, `updated_by?`.
 - Связи: `deal`, `approval` (0..1), `order` (0..1, `OfferOrder`).
-- Отдельного поля `special_conditions` в `offer` нет: особые условия есть в схемах продукта
-  (`ProductBaseSchema.special_conditions`) и заказа (`OrderOutSchema.special_conditions`).
+- `special_conditions?` — nullable особые условия КП; передаются без преобразований
+  в создаваемый заказ ОП.
 
 ## Approval — `approval`
 
-Согласование оффера/сделки.
+Текущее состояние кода хранит согласование оффера, но целевая модель workflow —
+единое согласование сделки со всеми её офферами.
 
-- `offer_id` → `offer`, `deal_id` → `deal`.
-- `status` (`ApprovalStatus`): `draft` | `pending` | `answered` | `canceled`.
+- Сейчас: `offer_id` → `offer`, `deal_id` → `deal`.
+- Цель Ticket 6: владелец процесса — `deal_id`; у сделки не более одного current
+  approval, но сохраняется ordered history версий. Обязательная связь нового
+  процесса с одним `offer_id` удаляется.
+- Целевые поля: `version`, `is_current`, `superseded_at`, `workflow_version`,
+  `subject_snapshot`, `subject_hash`, `route_context`.
+- Ограничения целевой модели: `UNIQUE(deal_id, version)` и partial unique
+  `deal_id WHERE is_current`; legacy `offer_id` временно nullable.
+- `status` (`ApprovalStatus`), цель v2:
+  `not_required` | `draft` | `pending` | `blocked` | `answered` | `canceled`.
 - `decision?` (`ApprovalDecision`): `approve` | `reject`; `decision_comment?`.
 - `reason_type` (`ApprovalReasonType`): `discount` | `product_rule`.
 - `source` (`ApprovalSource`): `email` | `auto_related_deals` | `auto_rule`.
 - `approvers` (JSON-список), `requested_at?`, `decided_at?`.
 - `email_token?`, `email_token_expires_at?` — для подтверждения согласования по ссылке из письма.
 - Связь `stages` загружается как список `ApprovalStageModel`, отсортированный по `position`.
+- Маршрут строится по максимальной скидке среди всех offers сделки; особые условия
+  любого offer добавляют одну mandatory stage `lawyer`.
+- После start snapshot неизменяем; повторное согласование создаёт следующую version.
 
 ## ApprovalStage — `approval_stages`
 
@@ -79,6 +91,23 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `skipped_by_user_id?` → `lkm_users`, `skipped_at?`, `skip_reason?`.
 - Ограничения: уникальны `(approval_id, position)`, `(approval_id, stage_code)` и
   `email_token`.
+
+## ApprovalStageToken — `approval_stage_tokens` (целевая модель)
+
+История bearer token стадии: `stage_id`, уникальный `token_hash`, `issued_at`,
+`expires_at`, `used_at`, `invalidated_at`. Raw token в БД не хранится. Старые записи
+сохраняются для идемпотентной обработки повторных ответов.
+
+## ApprovalStageNotification — `approval_stage_notifications` (целевая модель)
+
+Одна логическая notification generation: `stage_id`, `token_id`, immutable payload
+snapshot и временно encrypted raw token.
+
+## ApprovalStageNotificationDelivery — `approval_stage_notification_deliveries`
+
+Получатели transactional outbox: `notification_id`, recipient user/email, delivery
+status, attempts, `next_attempt_at`, `sent_at`, `last_error`. Для group stage
+несколько delivery rows относятся к одной notification/stage/token.
 
 ## OfferOrder — `offer_order`
 

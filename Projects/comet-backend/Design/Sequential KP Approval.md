@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-26
+updated: 2026-07-27
 source: docs/lkm_role_model.md
 tags: [project, design, approval, lkm, rbac]
 ---
@@ -23,20 +23,21 @@ tags: [project, design, approval, lkm, rbac]
 5. `approve_kp_product_owner` — владелец продукта;
 6. `approve_kp_lawyer` — юрист.
 
-В текущем коде уже добавлена таблица `approval_stages` и соответствующие enum'ы
-`ApprovalStageCode` / `ApprovalStageStatus`, но orchestration ещё работает по legacy-модели:
-`DealService.request_approval()` выбирает одного согласующего через
-`max(approval.approvers, key=lambda approver: approver["level"])`, отправляет одно письмо
-и переводит весь approval в `pending`. Ответ email ищется по `approval.email_token`, а не
-по token конкретной стадии.
+В текущем коде добавлены `approval_stages`, offer-level builder, selector assignee и
+активация первой waiting stage из `DealService.request_approval()`. Исходящее письмо
+всё ещё содержит legacy `approval.email_token`, а приём ответа изменяет approval
+напрямую. Кроме того, `OfferService` создаёт отдельный approval каждому offer, а
+`DealModel.approval` возвращает первый процесс из списка.
 
-Оставшийся разрыв до БТ02 теперь не в схеме БД, а в workflow: нужно подключить builder
-маршрута, выбор assignee, stage-level token'ы и state machine стадий.
+Оставшийся разрыв — переход к единому deal-level approval, stage-level email token
+и транзакционной state machine.
 
 Принятые решения для реализации:
 
-- approval-процесс принадлежит offer; процессы разных offers одной сделки запускаются
-  параллельно;
+- approval-процесс принадлежит сделке; все offers рассматриваются совместно в одном
+  маршруте и одном письме активной стадии;
+- скидочный маршрут определяется максимальной скидкой среди всех тарифов всех offers;
+- особые условия любого offer добавляют одну обязательную юридическую стадию;
 - единоличная стадия назначается одному персональному holder-у permission;
 - групповая стадия отправляется всем holders effective permission, первый ответ
   закрывает stage;
@@ -44,6 +45,8 @@ tags: [project, design, approval, lkm, rbac]
   имеет permissions нескольких стадий;
 - внутри approval одновременно может быть только одна `pending` stage;
 - все переходы фиксируются в `approval_stage_events`;
+- v2 workflow включается feature flag только после готовности audit, stage-token
+  processing и outbox delivery;
 - cutover выполняется только при отсутствии legacy approvals в `pending`.
 
 ## Варианты реализации
@@ -131,6 +134,32 @@ fallback rules.
 
 ## Рекомендуемая модель
 
+### Deal-level approval и версии
+
+`approval` — версия процесса согласования сделки, а не одного offer. У сделки может
+быть история процессов, но не более одного текущего:
+
+- `deal_id` — владелец агрегата;
+- `version` — монотонный номер версии внутри сделки;
+- `is_current`, `superseded_at` — выбор текущей версии без эвристики «первый в списке»;
+- `workflow_version` — разделение legacy и staged records;
+- `subject_snapshot`, `subject_hash` — неизменяемый после start предмет решения;
+- `route_context` — причины маршрута, max discount/source, offers с особыми
+  условиями, версии builder и stage order.
+
+Ограничения: `UNIQUE(deal_id, version)` и partial unique index по
+`deal_id WHERE is_current`. Обычный `UNIQUE(deal_id)` недопустим, поскольку уничтожает
+возможность повторного согласования с сохранением истории.
+
+Новые staged records не принадлежат одному offer. Nullable `offer_id` сохраняется
+только на период чтения legacy history. `DealModel.approvals` остаётся ordered
+history, а `current_approval` определяется отдельной relationship/query.
+
+Snapshot фиксирует все значения, показанные согласующему и влияющие на маршрут:
+offers, продукты, тарифы/цены/скидки, технические параметры, особые условия и
+deal-level поля. Email, API detail и создание заказов после approve используют этот
+snapshot, а не изменяемые live rows.
+
 Таблица `approval_stages` добавлена миграцией `2026_07_23_1200-a7b8c9d0e1f2_add_approval_stages.py`:
 
 ```sql
@@ -171,30 +200,67 @@ CREATE TABLE approval_stages (
 
 Статус `approval` остаётся агрегатным:
 
+- `not_required` — route policy рассчитана для snapshot, обязательных стадий нет;
 - `draft` — маршрут подготовлен, но ещё не запущен;
 - `pending` — есть активная стадия `pending` или следующая `waiting`;
+- `blocked` — предыдущее решение сохранено, но следующую stage нельзя активировать
+  из-за отсутствующего assignee;
 - `answered` + `decision=approve` — все обязательные стадии `approved` или `skipped`;
 - `answered` + `decision=reject` — любая стадия `rejected`;
 - `canceled` — процесс отменён.
+
+### Token history и transactional outbox
+
+Bearer token нельзя удалять после первого ответа, иначе повторный ответ невозможно
+отличить от неизвестного token и идемпотентно вернуть `already_processed`.
+
+Целевая таблица `approval_stage_tokens` хранит hash token, stage, issued/expires,
+used и invalidated timestamps. Reassign инвалидирует старую запись и создаёт новую.
+
+SMTP не вызывается внутри workflow-транзакции. В той же транзакции, что переводит
+stage, создаются одна логическая `approval_stage_notification` и N
+`approval_stage_notification_deliveries`. Notification временно хранит raw token
+только в зашифрованном виде; после завершения доставок secret редактируется. Outbox
+worker после commit отправляет deliveries с retry/backoff и
+`FOR UPDATE SKIP LOCKED`. Для group permission stage/token/message общие, recipients
+и статусы доставки раздельные.
 
 ## State machine
 
 Целевой запуск:
 
-1. При создании/обновлении оффера builder строит маршрут стадий.
-2. Маршрут зависит от причины согласования: скидка, техническая возможность,
-   нестандартные условия, тарифы и т.д.
+1. При создании/обновлении состава сделки builder строит единый маршрут стадий.
+2. Маршрут зависит от максимальной скидки среди всех offers сделки, технической
+   возможности, особых условий и других deal-level правил.
 3. Не все 6 стадий обязательны для каждого КП.
 4. Первая стадия получает `pending`, token, `requested_at`, `due_at`; остальные — `waiting`.
+5. Переход и notification outbox фиксируются одной транзакцией; письмо отправляется
+   после commit.
 
 ### Особые условия и юридическая стадия
 
 Особые условия — отдельное поле оффера `special_conditions`, а не значение,
-выведенное из скидки. Непустое после `strip()` значение добавляет в тот же маршрут
-одну обязательную стадию `lawyer` с пермиссией `approve_kp_lawyer`. Эта стадия
-дополняет, а не заменяет скидочные стадии: она ставится после них. Поэтому КП без
-скидки, но с особыми условиями, всё равно проходит один общий approval-процесс из
-юридической стадии. Пустое значение или `null` стадию не создаёт.
+выведенное из скидки. Непустое после `strip()` значение хотя бы у одного offer
+добавляет в единый маршрут сделки одну обязательную стадию `lawyer` с пермиссией
+`approve_kp_lawyer`. Пустые значения и `null` стадию не создают.
+
+Состав стадий и их порядок определяются раздельно. Начальная конфигурация порядка:
+`presale → lead → product_owner → lawyer → sales_director → finance_director`.
+Так директора получают документ после юридической визы. Позицию `lawyer` можно
+изменить в `STAGE_ORDER` без изменения правил включения; созданный маршрут фиксирует
+порядок в `approval_stages.position`.
+
+### Граница deal-level approval
+
+- Одна сделка имеет один актуальный approval.
+- Builder анализирует все актуальные offers и выбирает скидочную цепочку по
+  максимальной скидке среди всех цен.
+- На активной стадии формируется одно письмо со сделкой и всеми offers. Для group
+  permission оно доставляется каждому holder-у, но stage и token остаются общими.
+- Согласующий принимает решение по сделке целиком и видит прибыльные и
+  низкомаржинальные offers вместе.
+- Изменение любого offer пересобирает draft-маршрут; изменение при pending требует
+  отмены текущего процесса и явного rebuild.
 
 Approve:
 
@@ -204,6 +270,9 @@ Approve:
 4. Если есть следующая `waiting` stage — она становится `pending`, генерируется новый token,
    отправляется письмо/уведомление.
 5. Если стадий больше нет — approval закрывается как approved.
+6. Если решение сохранено, но у следующей stage нет assignee, approval получает
+   `blocked`, следующая stage остаётся waiting; retry activation продолжает процесс
+   после исправления permissions без отмены принятого решения.
 
 Reject:
 
@@ -264,10 +333,30 @@ Escalation и автоматический skip не входят в перву�
   effective permission стадии.
 - Единоличные permissions БТ02 должны приводить к конкретному assignee; без assignee нельзя
   отправить stage.
-- `deal.approval` сейчас возвращает первое согласование из списка, это нужно заменить
-  выбором актуального approval-процесса.
-- При изменении оффера во время `pending` нужно отменять текущие стадии и пересобирать маршрут.
+- `deal.approval` сейчас возвращает первое согласование из списка; модель нужно
+  мигрировать к единственному актуальному deal-level approval.
+- При изменении любого оффера во время `pending` нужно отменять текущие стадии и
+  пересобирать общий маршрут сделки.
+- Draft rebuild сериализуется блокировкой deal. После start snapshot неизменяем;
+  новый цикл создаёт следующую approval version и supersede предыдущей.
+- Все workflow CRUD принимают одну `AsyncSession`; вложенные автономные sessions
+  нарушат атомарность state/event/token/outbox. Lock order:
+  deal → current approval → active stage.
+- Skip разрешён только optional stage; mandatory `lawyer` не пропускается.
+- Reassign имеет смысл только для single-holder stage. Group membership определяется
+  effective permission.
 - Email и API decisions должны использовать одну доменную state machine, а не две разные ветки.
+
+## Интеграция с Order Processing
+
+Одно одобрение сделки должно породить отдельный заказ для каждого offer. Текущий
+контракт использует `approval.id` как единственный `external_approval_id`, поэтому
+после deal-level перехода он конфликтует для второго заказа.
+
+Предпочтительный контракт — составной `(approval_id, offer_id)`. Если ОП принимает
+только UUID, Comet вычисляет стабильный UUIDv5 от пары approval/offer. Payload каждого
+заказа строится из approved snapshot. Частичные ошибки повторяются per offer и не
+создают заново уже успешные заказы.
 
 ## Открытые вопросы
 

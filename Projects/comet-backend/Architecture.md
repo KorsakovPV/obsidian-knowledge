@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-26
+updated: 2026-07-27
 tags: [project, architecture, fastapi]
 ---
 
@@ -119,19 +119,33 @@ app/
 
 Ключевой бизнес-процесс — согласование оффера/сделки перед имплементацией:
 
+- Целевая граница процесса: одна сделка имеет один актуальный approval, который
+  рассматривает все offers совместно. Завершённые процессы сохраняются как версии;
+  partial unique index допускает только один current approval. Маршрут выбирается
+  по максимальной скидке среди всех цен сделки; особые условия любого offer
+  добавляют stage `lawyer`.
+- Approval фиксирует immutable `subject_snapshot` и `route_context`, поэтому email,
+  история решения и создание заказов используют согласованные, а не текущие live data.
+- Активная стадия формирует одно письмо со всей сделкой и всеми offers. Для group
+  permission письмо доставляется всем holders, но относится к одной stage/token.
+- Состав маршрута и порядок разделены; `STAGE_ORDER` позволяет перемещать `lawyer`.
+  Начальный порядок ставит юриста перед sales/finance directors.
+- State machine, audit, token history и notification outbox используют одну
+  DB-транзакцию/`AsyncSession`; SMTP выполняется outbox worker-ом после commit.
+
 - Модель `ApprovalModel` хранит статус (`draft/pending/answered/canceled`),
   решение (`approve/reject`), причину (`discount/product_rule`) и источник
   (`email` / `auto_related_deals` / `auto_rule`). См. [[Domain Model]].
 - Таблица `approval_stages` уже добавлена в модель и схемы как будущая основа
   последовательного workflow: stage code, position, required permission, assignee,
-  stage token, skip/audit fields. На текущем коде отправка и приём email ещё работают
-  через legacy-поля `approval.approvers` и `approval.email_token`, а не через stage token.
-- `OfferService._build_approval_create_data()` пока создаёт draft approval с mock approver
-  и `reason_type=discount`; route builder стадий в текущем дереве не подключён.
-- `DealService.request_approval()` выбирает согласующего из JSON `approvers` по максимальному
-  `level`, формирует email и добавляет в письмо строки сравнения тарифов оффера с клиентскими
-  и классификаторными ценами.
-- `DealService.receive_mail()` валидирует payload входящего письма по `deal_id`,
+  stage token, skip/audit fields.
+- `OfferService._build_approval_create_data()` подключает offer-level route builder
+  и создаёт стадии, но целевая граница перед Ticket 6 изменена на один approval сделки.
+- `DealService.request_approval()` активирует первую waiting stage через
+  `ApprovalStageActivationService`, выбирает single/group recipients и отправляет
+  письмо каждому recipient. Письмо пока использует legacy `approval.email_token`;
+  stage-level payload и обработка ответа относятся к Ticket 7.
+- `DealService.receive_mail()` пока валидирует payload входящего письма по `deal_id`,
   `deal_number` и `approval.email_token`, после валидного ответа переводит approval в
   `answered` и сохраняет решение/комментарий.
 - Ответы согласующих приходят по email и разбираются IMAP-поллером

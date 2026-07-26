@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-26
+updated: 2026-07-27
 source: docs/lkm_role_model.md
 tags: [project, tickets, approval, lkm, rbac]
 ---
@@ -37,12 +37,15 @@ token'ы.
 
 ## Ticket 2 — Реализовать builder маршрута согласования
 
-Цель: строить набор стадий для КП на основании причины согласования и данных оффера.
+Цель: строить единый набор стадий для сделки на основании причины согласования и
+данных всех её офферов.
 
 Что сделать:
 
 - Вынести построение маршрута из `OfferService._build_approval_create_data`.
-- На вход builder принимает offer/deal/reason context.
+- На вход builder принимает deal/reason context со всеми офферами сделки.
+- Скидочный маршрут определяется максимальной скидкой среди всех тарифов всех
+  офферов сделки.
 - На выходе отдаёт ordered list стадий с `stage_code`, `required_permission`, optional/mandatory.
 - Для первой итерации поддержать маршруты из БТ02: presale, lead, sales director,
   finance director, product owner, lawyer.
@@ -53,9 +56,9 @@ DoD:
 - Для каждого stage указана required permission.
 - Есть тесты на несколько типов маршрутов.
 
-Статус на 2026-07-26: в текущем дереве route builder не подключён. `OfferService`
-по-прежнему создаёт draft approval с mock approver через `_build_approval_create_data()`;
-стадии при создании approval не строятся.
+Статус на 2026-07-27: offer-level route builder и сохранение стадий подключены, но
+граница процесса уточнена: перед Ticket 6 builder нужно перевести на единый маршрут
+сделки по данным всех offers.
 
 ## Ticket 3 — Добавить в оффер особые условия и передавать их в ОП
 
@@ -103,20 +106,23 @@ DoD:
 
 Правило маршрута:
 
-- Особые условия есть, если `offer.special_conditions` не `null` и после `strip()`
-  содержит хотя бы один символ.
+- Особые условия есть, если хотя бы у одного оффера сделки
+  `offer.special_conditions` не `null` и после `strip()` содержит хотя бы один символ.
 - При наличии особых условий builder добавляет одну обязательную стадию
   `ApprovalStageCode.LAWYER` с `required_permission=Permission.APPROVE_KP_LAWYER`.
 - Юридическая стадия не заменяет стадии, выбранные по скидке: итоговый маршрут —
   объединение скидочной цепочки из Ticket 2 и стадии `lawyer`.
-- `lawyer` располагается после всех стадий скидочной цепочки. Если скидочного
-  согласования нет, но особые условия есть, маршрут состоит только из `lawyer`.
+- Позиция `lawyer` задаётся отдельной конфигурацией порядка стадий, а не условием
+  включения. Начальный порядок: `presale → lead → product_owner → lawyer →
+  sales_director → finance_director`, чтобы директора получали документ после визы
+  юриста. Если скидочного согласования нет, но особые условия есть, маршрут состоит
+  только из `lawyer`.
 - При `null`, пустой или состоящей только из пробелов строке стадия `lawyer` не создаётся.
 
 Что сделать:
 
-- Расширить builder маршрута из Ticket 2: он сам читает `offer.special_conditions`,
-  не получает отдельный `requires_lawyer` или другой флаг от вызывающего кода.
+- Расширить builder маршрута из Ticket 2: он сам проверяет `special_conditions`
+  всех офферов сделки и не получает отдельный `requires_lawyer` или другой флаг.
 - Сохранять результат в том же `approval` и тех же `approval_stages`; не создавать
   отдельный approval-процесс для юриста.
 - Использовать существующие `ApprovalStageCode.LAWYER` и
@@ -129,7 +135,8 @@ DoD:
 
 - Непустые особые условия создают ровно одну mandatory `lawyer` stage с
   `approve_kp_lawyer`.
-- Скидочные стадии сохраняются и идут перед юридической стадией.
+- Скидочные стадии сохраняются; позиция юридической стадии определяется конфигурацией
+  порядка и может меняться независимо от правил включения стадий.
 - КП без скидки, но с особыми условиями, не проходит без согласования.
 - Пустые особые условия не добавляют стадию юриста.
 - Тесты фиксируют состав, порядок и `required_permission` маршрута.
@@ -179,53 +186,164 @@ DoD:
 
 ## Ticket 6 — Реализовать state machine стадий
 
-Цель: реализовать единый транзакционный сервис переходов состояния approval и его
-стадий.
+Цель: реализовать единый транзакционный процесс согласования сделки и её стадий.
+
+Зависимости: Ticket 1–5.
+
+Размер задачи: Ticket 6 меняет границу агрегата, builder и state machine. Перед
+разработкой рекомендуется разделить реализацию минимум на три последовательных PR:
+
+1. deal-level schema, versioning и snapshot;
+2. deal-level builder и lifecycle draft/rebuild;
+3. транзакционная state machine и переключение request endpoint.
 
 Граница процесса:
 
-- Один `ApprovalModel` относится к одному offer.
-- Deal может содержать несколько независимых approval-процессов по своим offers.
-- `POST /api/v1/deals/{deal_id}/approval/request` запускает все draft approvals
-  офферов сделки. Между offers процессы идут параллельно, внутри одного approval
-  стадии идут строго по `position`.
-- Offer без стадий не создаёт/не запускает approval и не блокирует сделку.
+- Одна сделка имеет не более одного текущего `ApprovalModel`, но может иметь историю
+  завершённых/отменённых версий. Все офферы сделки рассматриваются в одном текущем
+  approval-процессе и одном письме активной стадии.
+- Маршрут по скидке определяется максимальной скидкой среди всех тарифов всех
+  офферов сделки. Скидки не суммируются и не усредняются: самый строгий необходимый
+  маршрут применяется ко всей сделке.
+- Если хотя бы у одного оффера есть непустые после `strip()` особые условия, общий
+  маршрут сделки содержит одну обязательную стадию `lawyer`.
+- Согласующий получает контекст всей сделки и всех её офферов, чтобы оценивать их
+  совместно, включая компенсацию низкомаржинального оффера прибыльными офферами.
+- Внутри approval стадии выполняются последовательно по сохранённому `position`.
+  На каждой активной стадии отправляется одно письмо по сделке, а не отдельные
+  письма по офферам. Для group permission одно и то же письмо отправляется каждому
+  holder-у, но относится к одной stage и имеет один stage token.
+- Сделка с пустым маршрутом сохраняет current approval version со статусом
+  `not_required`, snapshot/route context и без stages. Это фиксирует результат
+  расчёта; `start` для такой версии не выполняется.
+
+Версии и предмет согласования:
+
+- Нельзя делать обычный `UNIQUE(approval.deal_id)`: он запретит хранить историю
+  повторных согласований сделки. Добавить `version`, `is_current`,
+  `superseded_at`, `workflow_version` и ограничения:
+  `UNIQUE(deal_id, version)` плюс partial unique index по `deal_id WHERE is_current`.
+- Новые staged approvals имеют `offer_id = NULL`; legacy `offer_id` временно
+  сохраняется nullable для чтения старой истории до cleanup migration.
+- Approval хранит immutable `subject_snapshot` сделки и всех её offers, а также
+  `subject_hash`. Snapshot содержит значения, по которым принято решение: offer id,
+  product id, тарифы/цены/скидки, технические параметры, особые условия и необходимые
+  deal-level поля.
+- Хранить `route_context`: причины включения стадий, максимальную скидку и источник
+  этой скидки, offers с особыми условиями, версию builder-а и версию `STAGE_ORDER`.
+  Legacy `reason_type` не подходит для одновременных причин и остаётся только для
+  совместимости.
+- Пока approval `draft`, изменение сделки пересобирает snapshot и route в текущей
+  версии. После `start` snapshot и route неизменяемы. Новый цикл создаёт следующую
+  версию approval, а предыдущую помечает `is_current=false`.
+- Отсутствие approval не является доказательством `not_required`: рассчитанный
+  пустой маршрут представлен current version `status=not_required`.
+
+Правила построения и порядка:
+
+- До реализации аналитик должен утвердить полную матрицу trigger-ов, включая
+  product owner и комбинации нескольких причин. Builder не выбирает одну ветку по
+  scalar `reason_type`: он независимо вычисляет все причины и объединяет стадии.
+- Builder получает deal со всеми актуальными offers и формирует единый набор стадий.
+- Определение состава стадий и их порядок разделены. Условия включения не должны
+  зависеть от позиции стадии.
+- Порядок задаётся отдельной конфигурацией `STAGE_ORDER`. Начальное значение:
+  `presale → lead → product_owner → lawyer → sales_director → finance_director`.
+- `lawyer` должен быть перемещаемым изменением конфигурации без изменения скидочных
+  и юридических правил builder-а.
+- После создания approval итоговый порядок фиксируется в `approval_stages.position`;
+  изменение конфигурации влияет только на новые или явно пересобранные маршруты.
 
 Что сделать:
 
+- Перевести модель с offer-level на deal-level approval:
+  - `approval.deal_id` становится владельцем процесса;
+  - удалить обязательную принадлежность процесса одному `offer_id`;
+  - оставить `DealModel.approvals` как ordered history и добавить явное
+    `current_approval`, не вычисляемое через первый элемент списка;
+  - schema должна поддерживать legacy rows и expand/contract cutover из Ticket 12.
+- Делать новую forward Alembic revision поверх уже применённой migration
+  `approval_stages`; не переписывать существующую revision.
+- Перенести создание/пересборку approval из `OfferService` в deal-level orchestration.
+  Создание, изменение или удаление любого оффера должно пересобирать draft-маршрут
+  всей сделки. Изменение оффера при pending обрабатывается через cancel/rebuild policy.
+- Переделать route builder: вычислять максимальную скидку по всем офферам, добавлять
+  `lawyer` по особым условиям любого оффера, объединять несколько причин маршрута,
+  применять `STAGE_ORDER` и возвращать `route_context`.
 - Создать `ApprovalWorkflowService` с операциями `start`, `approve`, `reject`,
   `skip`, `reassign`, `cancel`.
 - Добавить в `approval_stages` persisted-поле `is_optional BOOLEAN NOT NULL
   DEFAULT false`; обновить модель, migration и Pydantic-схемы. Route builder должен
   сохранять в БД optional/mandatory признак.
-- Все переходы выполнять в одной DB-транзакции с `SELECT ... FOR UPDATE` для
-  approval и его активной стадии.
+- Все переходы выполнять в одной DB-транзакции и одной переданной `AsyncSession`.
+  Запрещены CRUD-методы, открывающие вложенные независимые sessions внутри workflow.
+  Использовать единый lock order: deal → current approval → active stage.
+- Создание и пересборку текущей версии сериализовать блокировкой строки deal, чтобы
+  параллельные create/update/request не создали два current approvals.
+  При переносе offer между deals блокировать обе сделки в детерминированном порядке.
 - Добавить partial unique index, запрещающий более одной стадии `pending` внутри
   одного approval.
 - `start`: разрешён только для `approval=draft`; активирует первую `waiting`
-  стадию. При ошибке выбора assignee ничего не меняет.
+  стадию. `POST /api/v1/deals/{deal_id}/approval/request` запускает единственный
+  draft approval сделки. При ошибке выбора assignee ничего не меняет и не отправляет
+  письмо. Перед стартом повторно вычислить `subject_hash`; несовпадение требует
+  rebuild или понятную conflict-ошибку.
 - `approve`: разрешён только для `pending`; сохраняет `approved`, `decision=approve`,
   `decided_at`, `decision_comment`, инвалидирует token и активирует следующую
   `waiting` stage.
 - Если после approve/skip стадий больше нет, установить
   `approval.status=answered`, `approval.decision=approve`, `decided_at`.
+- Если решение текущей стадии принято, но у следующей mandatory stage не найден
+  assignee, не откатывать уже принятое решение: сохранить stage/event, оставить
+  следующую stage `waiting`, перевести approval в `blocked` с
+  `blocked_permission/blocked_at` и не создавать token/outbox. Операция
+  `retry_activation` после исправления permissions идемпотентно продолжает процесс.
 - `reject`: переводит активную стадию в `rejected`, сохраняет решение и comment,
   остальные `waiting` стадии — в `canceled`, approval — в
   `answered/reject`.
 - `skip`: переводит стадию в `skipped` с actor/time/reason и активирует следующую.
-  Авторизация skip реализуется в Ticket 10.
+  Skip разрешён только для `is_optional=true`; mandatory stage, включая `lawyer`,
+  нельзя пропустить. Авторизация skip реализуется в Ticket 10.
 - `reassign`: оставляет стадию `pending`, меняет assignee, инвалидирует старый token
-  и выпускает новый. Авторизация реализуется в Ticket 10.
+  и выпускает новый. Reassign применим только к single-holder stage; для group stage
+  назначение определяется permission. Авторизация реализуется в Ticket 10.
 - `cancel`: переводит approval и все `waiting/pending` стадии в `canceled`,
   инвалидирует активные token'ы.
 - Повторное действие над уже закрытой стадией не меняет состояние и возвращает
   предсказуемый результат `already_processed`.
+- Email context активной стадии содержит данные сделки и ordered list всех её
+  офферов из frozen `subject_snapshot`, а не повторно читает изменяемые live rows.
+  В одном письме должны быть видны как минимум продукт, цены, скидка и особые
+  условия каждого оффера.
+- State machine не отправляет SMTP внутри DB-транзакции. Она атомарно сохраняет
+  переход и durable notification intent; transactional outbox и доставка
+  реализуются в Ticket 7.
+- Все v2 writes и фоновые consumer-ы закрыть feature flag
+  `approval_workflow_v2_enabled`. Включение разрешено только после Ticket 7 и Ticket 9.
 
 DoD:
 
+- У сделки не более одного актуального approval-процесса; отдельные approval для
+  каждого оффера больше не создаются.
+- Пустой маршрут представлен сохранённой current version `not_required`, а не
+  двусмысленным отсутствием approval.
+- Повторное согласование создаёт новую version и не удаляет историю предыдущего
+  процесса; partial unique index не допускает две current versions.
+- Решение относится к immutable snapshot; route context объясняет, почему каждая
+  стадия попала в маршрут.
+- Максимальная скидка любого оффера определяет единый скидочный маршрут сделки.
+- Особые условия любого оффера добавляют ровно одну mandatory stage `lawyer`.
+- Для одной активной стадии формируется одно письмо с контекстом всей сделки и всех
+  офферов; отдельные письма по офферам не создаются.
+- Порядок `lawyer` меняется через конфигурацию `STAGE_ORDER`; директора получают
+  документ после юридической визы при начальной конфигурации.
 - В одном approval не может быть больше одной `pending` stage.
 - Невалидные переходы не записываются в БД.
+- Изменение состояния, token/notification intent и audit event выполняются одной
+  транзакцией; rollback любой части откатывает всё.
 - Полная цепочка approve завершается агрегатным `answered/approve`.
+- Ошибка assignee следующей стадии даёт восстанавливаемый `blocked`, не теряет
+  предыдущее решение и не отправляет письмо в никуда.
 - Reject закрывает процесс и отменяет необработанные стадии.
 - Cancel и repeated decision инвалидируют возможность сдвинуть процесс старым token.
 - Тесты покрывают start, approve chain, reject, skip, reassign, cancel,
@@ -235,51 +353,92 @@ DoD:
 
 Цель: email-ответ должен закрывать конкретную стадию, а не весь approval.
 
+Зависимости: Ticket 6.
+
 Контракт письма:
 
 ```json
 {
   "deal_id": "uuid",
   "deal_number": 123,
-  "offer_id": "uuid",
   "stage_id": "uuid",
-  "email_token": "uuid",
+  "email_token": "opaque-secret",
   "decision": "approve | reject"
 }
 ```
 
-Источник истины — уникальный `approval_stages.email_token`. Остальные идентификаторы
-проверяются на соответствие найденной стадии и используются для понятной диагностики.
+Источник истины — запись истории stage token. Остальные идентификаторы проверяются
+на соответствие найденной стадии и используются для понятной диагностики.
 
 Что сделать:
 
-- При активации стадии генерировать новый `email_token`, устанавливать срок действия,
-  `requested_at` и `due_at`.
+- Добавить `approval_stage_tokens`: `id`, `stage_id`, уникальный `token_hash`,
+  `issued_at`, `expires_at`, `used_at`, `invalidated_at`. В email передавать
+  криптографически случайный raw token достаточной энтропии; lookup выполнять по
+  hash с constant-time comparison.
+- Stage хранит ссылку на текущий active token либо получает его отдельным запросом.
+  Старые token rows не удалять: это позволяет отличать `already_processed` от
+  неизвестного/поддельного token после закрытия или reassign.
+- При активации стадии выпускать token и устанавливать `requested_at`/`due_at`
+  согласно конфигурации `stage_token_ttl` и SLA по stage code. Значения обязательны
+  в production settings и инъецируются в тестах.
+- Истёкший token не закрывает stage; stage остаётся pending. Операция `resend`
+  инвалидирует старый token, выпускает новый и создаёт новую generation
+  notifications без повторной активации stage.
 - Для единоличной стадии отправлять письмо `assigned_email`; для групповой —
-  каждому holder `required_permission` с одинаковым stage token.
-- Расширить `ReceivedApprovalDecisionSchema` полями `offer_id` и `stage_id`.
-- Добавить CRUD-запрос стадии по token с eager load approval/offer/deal.
+  каждому holder `required_permission` одинаковое логическое письмо с одним stage
+  token. Не создавать отдельную stage на каждого recipient.
+- Зафиксировать канонический delivery email пользователя. Если `ad_login` не
+  гарантированно является email, добавить отдельное валидируемое поле. При разборе
+  входящего `From` использовать `parseaddr(...)[1]`, trim и casefold; не сравнивать
+  display-name строку целиком.
+- Добавить transactional outbox из двух уровней:
+  - `approval_stage_notifications` — одна логическая notification на generation:
+    stage/token, immutable payload snapshot и encrypted raw token;
+  - `approval_stage_notification_deliveries` — N recipients: user/email, status
+    (`pending/sent/failed/canceled`), attempts, `next_attempt_at`, `sent_at`,
+    `last_error`.
+- Уникальность `(notification_id, canonical_recipient_email)` защищает от дублей.
+  Raw token никогда не логировать и не возвращать API; encrypted secret в outbox
+  удалить/редактировать после завершения всех deliveries.
+- Workflow в одной транзакции сохраняет stage/token/outbox rows. Отдельный worker
+  отправляет после commit, использует `FOR UPDATE SKIP LOCKED`, retry/backoff и
+  идемпотентную обработку. SMTP не вызывается внутри workflow-транзакции.
+- Email строить только из `approval.subject_snapshot`; все recipients одной stage
+  получают одинаковую версию документа.
+- Расширить `ReceivedApprovalDecisionSchema` полем `stage_id`.
+- Добавить CRUD-запрос стадии по token с eager load approval/deal и всех offers сделки.
 - `DealService.receive_mail()` после валидации payload должен вызывать только
   `ApprovalWorkflowService.approve/reject`, не менять approval напрямую.
 - Принимать решение только для стадии `pending`, с неистёкшим token и совпадающими
-  `deal_id`, `deal_number`, `offer_id`, `stage_id`.
+  `deal_id`, `deal_number`, `stage_id`.
 - Для единоличной стадии `ReceivedEmailSchema.from_email` должен совпадать с
   `assigned_email`. Для групповой стадии отправитель должен быть сохранённым LKM user
   с effective `required_permission` на момент обработки ответа.
-- После approve/reject/skip/cancel обнулять token и expires_at. После reassign
-  выпускать другой token.
+- После approve/reject/skip/cancel помечать token использованным/инвалидированным,
+  но сохранять запись. После reassign выпускать другой token и инвалидировать
+  notification/deliveries старой generation.
 - Ответ по закрытой стадии или старому token считать `already_processed`; он не
   должен повторно отправлять следующую стадию.
 - Удалить использование approval-level `email_token` из нового workflow. Legacy
   обработка остаётся только для записей без stages до выполнения Ticket 12.
+- Во всех публичных response schemas, OpenAPI examples и логах исключить raw/hash
+  approval/stage token. Наличие stages не является discriminator workflow:
+  переключение выполняется только по persisted `workflow_version`.
 
 DoD:
 
-- Email однозначно закрывает только указанную stage соответствующего offer.
+- Email однозначно закрывает только указанную stage соответствующей сделки.
 - Старый, истёкший или не совпадающий с payload token не меняет БД.
+- Повторный старый token находится по истории и возвращает `already_processed`,
+  неизвестный token не раскрывает существование approval.
 - Первый ответ на групповую стадию закрывает её, остальные ответы идемпотентны.
 - Ответ с email пользователя, которому стадия недоступна, не меняет БД.
-- После решения автоматически отправляется только следующая стадия того же approval.
+- После решения автоматически отправляется только следующая стадия общего approval сделки.
+- Сбой SMTP не теряет уведомление: outbox повторяет доставку без повторной активации
+  stage и без дублей одному recipient.
+- Частичная group-доставка видна по delivery rows; закрытие stage отменяет ещё не
+  отправленные deliveries, а уже отправленные ответы остаются идемпотентными.
 - Тесты покрывают valid decision, stale/expired token, payload mismatch,
   repeated group reply и переход к следующей стадии.
 
@@ -287,49 +446,84 @@ DoD:
 
 Цель: дать фронту список КП, ожидающих решения текущего пользователя.
 
+Зависимости: Ticket 6 и Ticket 7.
+
 Что сделать:
 
 - Добавить `GET /api/v1/approval-stages/pending`.
-- Текущего LKM user определять по аутентифицированному AD login/email.
+- Текущего LKM user брать из установленного auth middleware principal, не выполнять
+  повторную недоверенную идентификацию по query/body.
 - Единоличную stage показывать только при `assigned_user_id=current_user.id`.
 - Групповую stage (`assigned_user_id IS NULL`) показывать, если пользователь имеет
   effective `required_permission`.
 - Возвращать только `status=pending`; сортировать по `due_at NULLS LAST`,
   затем `requested_at`, поддержать `limit/offset`.
 - Response item должен содержать: `stage_id`, `stage_code`, `required_permission`,
-  `status`, `requested_at`, `due_at`, `approval_id`, `offer_id`, `product_id`,
-  `deal_id`, `deal_number`, `deal_title`, `client_id`.
+  `status`, `requested_at`, `due_at`, `approval_id`, `deal_id`, `deal_number`,
+  `deal_title`, `client_id`, `approval_version`, `subject_hash` и краткий ordered
+  list офферов/продуктов из approval snapshot.
+- Offers внутри response/snapshot сортировать стабильно по `(created_at, id)`.
 - Не возвращать `email_token` в API.
 - Реализовать SQL-фильтрацию в CRUD, а не загружать все стадии в память.
+- Стабилизировать пагинацию tie-breaker-ом `stage_id`; предпочтителен cursor по
+  `(due_at, requested_at, stage_id)`, либо эти поля обязательны в `ORDER BY` при
+  `limit/offset`. Задать default и максимальный `limit`.
 - Добавить API-тесты для single-holder, group permission, постороннего пользователя,
   закрытой стадии и пагинации.
+- Добавить `POST /api/v1/approval-stages/{stage_id}/decision` с body
+  `{"decision": "approve | reject", "comment": "..."}` и обязательным
+  `Idempotency-Key`. Endpoint не принимает email token и вызывает тот же
+  `ApprovalWorkflowService`, что email consumer.
+- Для single-holder decision разрешён только текущему `assigned_user_id`; для group
+  stage — текущему holder effective permission. Авторизацию и status повторно
+  проверять внутри locked workflow-транзакции, не полагаться только на router guard.
+- Возвращать стабильный machine-readable `code`: `already_processed`,
+  `decision_conflict`, `invalid_status`, `not_assigned` или `permission_denied`.
 
 DoD:
 
 - Пользователь видит только доступные ему стадии.
-- Stage исчезает из pending после decision/skip/reassign.
+- Query одновременно фильтрует `approval.status=pending` и `stage.status=pending`.
+- Stage исчезает после decision/skip. После reassign single-holder stage исчезает
+  у прежнего assignee и появляется у нового; group stage через reassign не меняется.
 - Закрытые стадии и token не попадают в response.
 - Пагинация и порядок стабильны.
 - Есть API tests на permissions и isolation между пользователями.
+- Email и API decision дают одинаковые переходы/events; повтор одного
+  `Idempotency-Key` возвращает исходный результат, противоположное решение —
+  `decision_conflict`.
 
 ## Ticket 9 — Добавить аудит переходов workflow
 
 Цель: хранить неизменяемую историю каждого перехода стадии до появления управляющих
 API.
 
+Зависимости: интерфейс state machine из Ticket 6. Feature flag v2 нельзя включать,
+пока state machine не пишет audit events из этого тикета.
+
 Что сделать:
 
 - Добавить `approval_stage_events`: `id`, `stage_id`, `approval_id`, `actor_user_id`
   nullable для системного действия, `action`, `old_status`, `new_status`,
-  `reason`, `metadata JSONB`, `created_at`.
+  `reason`, `metadata JSONB`, `sequence`, `idempotency_key`, `created_at`.
 - Ввести enum action: `started`, `approved`, `rejected`, `skipped`, `reassigned`,
-  `canceled`.
+  `canceled`, `superseded`, `activation_failed`, `activation_retried`.
+- Гарантировать `UNIQUE(approval_id, sequence)` и уникальность непустого
+  `idempotency_key`. Историю сортировать по `sequence`, а не только по timestamp.
 - Добавить индексы `(stage_id, created_at)` и `(approval_id, created_at)`.
 - Каждая операция `ApprovalWorkflowService` должна создавать event в той же
   транзакции, что и изменение stage.
 - Для reassign сохранять old/new user id и email в `metadata`; для email decision —
-  `ReceivedEmailSchema.id`.
+  `ReceivedEmailSchema.id` как source id. Для API использовать `Idempotency-Key`;
+  уникальность задавать по `(approval_id, source, source_id)`, чтобы ключи разных
+  каналов не конфликтовали. В metadata хранить
+  `schema_version`, approval version и subject hash.
+- Для reject/cancel создавать отдельный event каждого реально изменённого stage,
+  а не один агрегатный event без истории отменённых стадий.
 - Event-записи не обновлять и не удалять отдельно от cascade удаления всего approval.
+  Routine rebuild/supersede не удаляет approvals/stages/events. Hard delete возможен
+  только по отдельной retention policy удаления всей сделки; это ограничение явно
+  документировать.
 - Добавить read schema и включить ordered history в детальный response approval.
 - Добавить model, CRUD и integration tests для каждого action.
 
@@ -337,12 +531,16 @@ DoD:
 
 - Для каждого фактического перехода есть ровно один event.
 - Повторный идемпотентный запрос не создаёт второй event.
+- Два конкурентных действия не получают одинаковый sequence и не создают два
+  фактических перехода.
 - По reassign видно прежнего и нового assignee, по skip — actor и reason.
 - Изменение stage и создание event атомарны.
 
 ## Ticket 10 — API для skip и reassign
 
 Цель: поддержать отсутствие согласующего без ручной правки БД.
+
+Зависимости: Ticket 7 и Ticket 9.
 
 Принятые permissions:
 
@@ -353,6 +551,10 @@ Permissions добавить в `Permission`; они синхронизирую�
 Проверки выполнять только по permissions, без проверки имени роли. Escalation и
 автоматический skip в этот тикет не входят.
 
+Bootstrap policy: миграция добавляет permissions в справочник и выдаёт их только
+роли `admin` (если аналитик не утвердит personal-only). Обычным согласующим права
+skip/reassign автоматически не выдаются.
+
 Что сделать:
 
 - Добавить `POST /api/v1/approval-stages/{stage_id}/skip` с body
@@ -360,122 +562,236 @@ Permissions добавить в `Permission`; они синхронизирую�
 - Добавить `POST /api/v1/approval-stages/{stage_id}/reassign` с body
   `{"user_id": "uuid", "reason": "непустая строка"}`.
 - Skip/reassign разрешены только для `pending` stage и пользователя с
-  соответствующей permission.
+  соответствующей permission. Каждый mutation request принимает idempotency key.
+- Skip разрешён только для optional stage. Mandatory stages нельзя пропустить даже
+  при наличии `skip_kp_approval_stage`.
+- Reassign разрешён только для single-holder stage и должен менять assignee на
+  другого пользователя. Для group stage возвращать HTTP 409 с code
+  `reassign_not_supported_for_group_stage`.
 - Новый assignee должен существовать в `lkm_users` и иметь effective `required_permission`.
   Для единоличной permission он также должен быть её единственным персональным holder.
+  Практический порядок: администратор сначала меняет personal holder permission,
+  затем вызывает reassign на нового единственного holder-а; старый пользователь
+  после смены permission не может принять решение.
 - Skip вызывает state machine, сохраняет `skipped_by_user_id`, `skipped_at`,
   `skip_reason`, создаёт audit event и активирует следующую stage.
 - Reassign меняет assignee, создаёт audit event и новое письмо/token. Старый token
-  становится недействительным до отправки нового письма.
+  и его неотправленные notifications инвалидируются в той же транзакции; новый
+  token/outbox создаются атомарно.
 - Для 403, stage not found, invalid status, invalid target и empty reason добавить
-  отдельные пользовательские ошибки.
+  отдельные пользовательские ошибки со стабильными machine-readable codes.
+- Добавить retry/resend operations для `blocked` approval и истёкшего token либо
+  явно закрыть их отдельным административным endpoint с теми же permission/audit
+  требованиями.
 - Добавить API и service tests.
 
 DoD:
 
 - Skip и reassign нельзя вызвать без соответствующей permission.
 - Skip без reason и reassign неподходящему пользователю отклоняются без изменения БД.
+- Mandatory stage нельзя skip, group stage нельзя reassign.
 - Reassign инвалидирует старый token, отправляет новый и сохраняет old/new assignee.
 - Skip активирует следующую стадию и остаётся отличимым от approve.
 - Все действия отражены в `approval_stage_events`.
 
 ## Ticket 11 — Пересобрать actions и статусы API под stage workflow
 
-Цель: backend response и action availability должны отражать offer-level stage
-workflow, а не первое legacy approval сделки.
+Цель: backend response и action availability должны отражать единый deal-level
+stage workflow, а не первое legacy approval из списка.
+
+Зависимости: Ticket 6–10.
 
 Что сделать:
 
 - Удалить использование `DealModel.approval`, возвращающего первый approval.
-- Для offer вычислять `approval_summary`: `approval_id`, aggregate `status`,
-  `decision`, `active_stage`, `completed_stages`, `skipped_stages`,
-  `total_stages`.
+  Возвращать `current_approval` отдельно от ordered `approval_history`.
+- Для сделки вычислять `approval_summary`: `approval_id`, aggregate `status`,
+  `version`, `subject_hash`, `decision`, `active_stage`, `completed_stages`,
+  `skipped_stages`, `canceled_stages`, `stage_counts_by_status`, `total_stages`,
+  notification delivery summary. `completed_stages` включает только
+  `approved/rejected/skipped`; canceled показываются отдельно.
 - `active_stage` содержит `stage_id`, `stage_code`, `required_permission`,
   `assigned_user_id`, `assigned_email`, `requested_at`, `due_at`, но не token.
-- Для deal возвращать список `offer_approvals` и агрегат:
-  `not_required | draft | pending | approved | rejected | canceled`.
-- Deal aggregate: `rejected`, если отклонён хотя бы один offer; `pending`, если
-  хотя бы один процесс pending; `draft`, если есть draft и нет pending/rejected;
-  `canceled`, если pending/draft/rejected отсутствуют и отменён хотя бы один процесс;
-  `approved`, если все требующие согласования offers approved; `not_required`, если
-  ни один offer не требует согласования.
-- Обновить `deal_actions` / `offer_actions`: edit/delete запрещены только для
-  соответствующего pending approval; request approval доступен, если в сделке есть
-  хотя бы один draft approval и нет pending.
+- Для deal возвращать один `approval_summary` со статусом:
+  `not_required | draft | pending | blocked | approved | rejected | canceled`.
+- Обновить `deal_actions` / `offer_actions`: изменение любого оффера запрещено при
+  pending approval сделки; request approval доступен для единственного draft approval.
+- Для draft изменение deal/offer пересобирает snapshot и route под блокировкой deal.
+  Для pending изменение полей, входящих в snapshot, возвращает 409. Для
+  approved/rejected/canceled изменение создаёт новую current version либо
+  `not_required`, сохраняя предыдущую в history.
+- Одинаково применять invalidation policy к offer endpoints и deal fields, влияющим
+  на предмет согласования; нельзя оставить обходной update endpoint.
 - Доступность `skip/reassign` рассчитывать по active stage и permissions текущего
   пользователя.
-- Добавить response schemas и tests для нескольких offers с разными состояниями.
+- Удалить token-поля из всех публичных approval/offer/deal schemas, а не только из
+  pending-list. Для истории добавить отдельный paginated endpoint без bearer secrets.
+- Offer response больше не содержит собственный approval; он ссылается на
+  deal-level summary/version.
+- Добавить response schemas и tests для сделки с несколькими offers в одном процессе.
 
 DoD:
 
 - API не выбирает случайный/первый approval сделки.
-- Frontend получает active stage и агрегат по всем offers без дополнительных запросов.
+- История версий доступна отдельно, а summary всегда относится к current version.
+- Frontend получает active stage и состав всех offers без дополнительных запросов.
 - Actions соответствуют stage state и effective permissions.
-- Тесты покрывают mixed offer states, pending, approved, skipped, rejected и canceled.
+- Router-level availability не заменяет повторную авторизацию command handler-а
+  внутри транзакции.
+- Тесты покрывают сделки с несколькими offers, pending, approved, skipped, rejected
+  и canceled.
 
 ## Ticket 12 — Миграция текущих approvals и backward compatibility
 
 Цель: безопасно перейти от текущей модели к stage workflow.
+
+Зависимости: Ticket 6–11.
 
 Принятая стратегия:
 
 - Перед cutover временно запретить новые отправки на согласование.
 - На момент миграции в БД не должно быть `approval.status=pending`. Preflight
   проверка прерывает операцию и выводит ID таких approvals; их нужно дождаться или
-  отозвать штатным способом.
-- `draft` approvals пересобираются builder-ом по актуальным данным offer/deal.
+  закрыть операционной командой. На текущий `revoke_approval()` полагаться нельзя,
+  пока он остаётся заглушкой.
+- `draft` approvals группируются по deal и пересобираются builder-ом в один
+  deal-level approval по актуальным данным всех offers.
 - `answered` и `canceled` approvals не получают искусственных stages и остаются
   readonly legacy history.
-- Новый workflow работает только с approvals, у которых есть stages.
+- Признак нового workflow — только `workflow_version=2`, а не наличие stages:
+  transitional legacy rows уже могут иметь stages, а v2 `not_required` version
+  законно не имеет стадий.
 
 Что сделать:
 
+- Использовать expand/migrate/contract deployment: сначала nullable/new columns и
+  dual-read код, затем preflight/data migration, после проверки — переключение
+  writes. Не добавлять новые NOT NULL/partial unique ограничения до backfill.
+- На время cutover установить persisted maintenance flag и взять PostgreSQL advisory
+  lock, которые проверяются внутри write-транзакций. Остановить request approval,
+  IMAP consumer и outbox worker; одного HTTP-флага недостаточно.
 - Добавить preflight-команду, проверяющую pending approvals и печатающую их
-  `approval_id`, `offer_id`, `deal_id`.
-- Добавить идемпотентный data migration/service command для пересборки stages всех
-  draft approvals. Повторный запуск не должен создавать дубликаты.
-- Для draft с пустым маршрутом удалить approval и увеличить счётчик
-  `approval_not_required` в отчёте.
+  `approval_id`, `deal_id`.
+- Добавить идемпотентный data migration/service command, объединяющий draft approvals
+  по deal и пересобирающий единый маршрут. Повторный запуск не должен создавать дубликаты.
+- Для draft с пустым маршрутом создать current v2 version `not_required` и увеличить
+  счётчик `approval_not_required` в отчёте. Legacy rows физически не удалять до
+  подтверждённого cutover; помечать superseded.
+- Legacy answered/canceled rows пометить `workflow_version=legacy`,
+  `is_current=false` и сохранить `offer_id`. Для их отображения реализовать
+  совместимый deal-level aggregate; отсутствие current staged approval нельзя
+  автоматически трактовать как `not_required`.
+- Для каждого deal формировать dry-run reconciliation: legacy ids/statuses,
+  выбранная current version, max discount/source, offers с особыми условиями,
+  новый route и subject hash.
+- Если trigger product owner или другая причина не восстанавливается из актуальных
+  данных, migration не угадывает её: помечает deal `manual_review_required` и
+  исключает его из cutover до ручного решения.
 - В read schemas сохранить отображение answered/canceled legacy approvals без stages.
 - После успешного cutover перестать создавать и читать `approval.approvers` и
   approval-level email token в новом workflow. Физическое удаление legacy columns
   вынести в отдельную cleanup migration после стабилизации.
 - Описать runbook: backup, запрет новых request, preflight, migration, проверки
   количества, deploy, включение request, rollback.
-- Rollback возвращает старый код, не удаляя legacy columns; созданные stages можно
-  оставить неиспользуемыми до повторного cutover.
+- Rollback старого offer-level кода разрешён только до включения v2 write traffic.
+  После появления deal-level rows rollback означает forward-compatible v2 release
+  либо восстановление DB snapshot; старый код не умеет nullable `offer_id` и новые
+  current versions.
 
 DoD:
 
 - Миграция не теряет старые решения.
+- Deal-level summary после cutover сохраняет смысл legacy approved/rejected history
+  и не превращает её в `not_required`.
 - Cutover не начинается при наличии pending legacy approvals.
 - Все оставшиеся draft approvals имеют корректный маршрут без дублей; удалённые
   пустые маршруты учтены в `approval_not_required`.
 - Answered/canceled legacy approvals продолжают читаться.
 - Повторный запуск migration идемпотентен.
 - Есть проверенный dry-run, rollback и операционный runbook.
+- Cutover защищён от гонки между preflight и первым v2 write advisory lock/maintenance
+  flag; background consumers гарантированно остановлены.
 
-## Ticket 13 — Интеграционные и конкурентные тесты workflow
+## Ticket 13 — Адаптировать создание заказов в ОП к deal-level approval
+
+Цель: после единого решения по сделке создать отдельный заказ для каждого
+согласованного оффера без конфликта idempotency key.
+
+Зависимости: Ticket 6, Ticket 11 и контракт Order Processing.
+
+Контекст:
+
+- Сейчас `OfferImplementationService` ищет approval по `offer_id`, использует
+  `approval.offer` и отправляет `approval.id` как `external_approval_id`.
+- После перехода `1 deal = 1 approval` один `approval.id` относится к нескольким
+  offers, но ОП по-прежнему создаёт отдельный заказ на каждый offer. Повторять один
+  `external_approval_id` для разных заказов нельзя.
+
+Что сделать:
+
+- Запускать создание заказов только после полного `answered/approve` текущей version
+  сделки и только для offers из одобренного `subject_snapshot`.
+- Согласовать с ОП составной idempotency contract `(approval_id, offer_id)`.
+  Если API ОП принимает только один UUID, использовать документированный
+  детерминированный UUIDv5 от `approval.id + offer.id`; не генерировать случайный
+  ключ при retry.
+- Для трассировки передавать deal approval id/version и offer id отдельно, если
+  контракт ОП позволяет.
+- Формировать payload заказа из одобренного snapshot либо проверять совпадение
+  `subject_hash` с live data перед отправкой. Нельзя создать заказ из данных,
+  отличающихся от согласованных.
+- Создавать/восстанавливать заказы независимо по каждому offer. Partial failure
+  одного заказа не должен повторно создавать уже успешные.
+- Хранить per-offer implementation status, attempts, last_error и использованный
+  external id. Deal считается переданным в имплементацию только после успеха всех
+  требуемых заказов.
+- Передавать `special_conditions` каждого offer без преобразований.
+- Добавить tests на два offers одного approval, retry после timeout, partial failure,
+  повторный запуск и несовпадение snapshot/live data.
+
+DoD:
+
+- Один approved deal-level approval создаёт ровно один заказ на каждый offer.
+- У каждого заказа стабильный уникальный idempotency key, повторный запуск не
+  создаёт дублей.
+- В ОП уходят именно согласованные данные и особые условия соответствующего offer.
+- Partial failure восстанавливается повторным запуском только для неуспешных offers.
+
+## Ticket 14 — Интеграционные и конкурентные тесты workflow
 
 Цель: проверить совместную работу builder, assignee selector, state machine, email,
-API и БД после unit-тестов отдельных тикетов.
+API, Order Processing и БД после unit-тестов отдельных тикетов.
 
 Что сделать:
 
 - Добавить DB integration test полного маршрута
-  `presale -> lead -> sales_director -> finance_director -> lawyer`.
+  `presale -> lead -> product_owner -> lawyer -> sales_director -> finance_director`
+  при одновременных discount/product/legal triggers.
 - Проверить отдельные маршруты: no approval, только lawyer, только product owner,
   скидочная цепочка без lawyer.
-- Проверить deal с несколькими offers: независимые approval-процессы стартуют
-  параллельно и корректно агрегируются.
+- Проверить deal с несколькими offers: создаётся одна current approval version,
+  максимальная скидка выбирает общий маршрут, а особые условия любого offer
+  добавляют одну `lawyer` stage.
+- Проверить, что одна активная stage использует один snapshot/token и одно логическое
+  письмо со всеми offers; group holders получают копии одного сообщения.
 - Проверить single-holder и group assignee, включая первый ответ из группы.
 - Проверить email approve/reject, expired/stale token, payload mismatch и repeated reply.
+- Проверить гонки email decision против API decision и decision против
+  skip/reassign: ровно одна команда меняет состояние, противоположная получает
+  предсказуемый conflict.
 - Проверить skip/reassign с audit events и permissions.
 - Конкурентно отправить два решения одной pending stage: только один запрос меняет
   состояние, создаёт event и активирует следующую стадию.
 - Конкурентно запустить один approval дважды: остаётся ровно одна pending stage и
   одно стартовое событие.
 - Добавить тесты rollback транзакции при ошибке assignee и при ошибке записи event.
+- Проверить конкурентные rebuild/start одного deal, partial unique current approval,
+  неизменность snapshot после start и supersede/version history.
+- Проверить outbox retry/idempotency и создание отдельных OP-заказов для нескольких
+  offers без конфликтов `external_approval_id`.
+- Проверить частичную group-доставку, изменение group membership во время pending,
+  blocked/retry activation и пользователя с permissions нескольких последовательных
+  stages.
 - Запускать тесты на PostgreSQL, потому что `FOR UPDATE`, partial index и concurrency
   нельзя достоверно проверить только unit-моками.
 
@@ -485,3 +801,33 @@ DoD:
 - После каждого сценария проверяются stage, approval, token и events в БД.
 - Нет flaky ожиданий через `sleep`; конкурентные тесты синхронизируются barrier-ом.
 - `poetry run pytest` и `poetry run make check` проходят.
+
+## Ticket 15 — Удалить legacy approval contract после стабилизации
+
+Цель: завершить expand/contract migration только после успешной эксплуатации v2.
+
+Зависимости: Ticket 12–14, подтверждённый период наблюдения и отсутствие rollback
+на offer-level release.
+
+Что сделать:
+
+- Проверить, что нет `workflow_version=1` records, необходимых online API. Перед
+  удалением legacy columns перенести требуемую историю в snapshot/history schemas.
+- Удалить создание/чтение `approval.approvers`, approval-level `email_token`,
+  `email_token_expires_at`, scalar legacy `reason_type` и обязательную связь
+  `approval.offer_id`.
+- Удалить `OfferModel.approval`, `ApprovalCrud.get_by_offer_id`,
+  `_build_approval_create_data()` в `OfferService` и legacy ветки
+  `DealService.request_approval()/receive_mail()`.
+- Сделать v2 fields/constraints NOT NULL там, где это безопасно после backfill.
+- Удалить feature-flag fallback, но сохранить аварийное выключение новых starts и
+  background delivery.
+- Добавить migration tests и сверку публичной OpenAPI schema на отсутствие token и
+  offer-level approval contract.
+
+DoD:
+
+- В runtime нет двух конкурирующих approval workflows.
+- Legacy bearer token/approvers не читаются и не возвращаются API.
+- История решений сохранена, migrations применяются/откатываются в допустимой
+  contract-границе.
