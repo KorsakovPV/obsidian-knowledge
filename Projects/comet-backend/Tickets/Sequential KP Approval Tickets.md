@@ -831,6 +831,27 @@ DoD:
 - Cutover защищён от гонки между preflight и первым v2 write advisory lock/maintenance
   flag; background consumers гарантированно остановлены.
 
+Статус реализации на 2026-07-28:
+
+- expand-миграция `d4e5f6a7b8ca` добавляет `approval_maintenance_state` и
+  `approval_cutover_deals`; существующие колонки `approval` не получают NOT NULL и новых
+  ограничений;
+- `ApprovalMaintenanceService` реализует persisted flag и advisory lock `21642164`
+  (exclusive у cutover, `pg_try_advisory_xact_lock_shared` в write-транзакциях);
+  проверки встроены в request approval, rebuild, API стадий, outbox worker и IMAP consumer;
+- `ApprovalCutoverService` выполняет preflight, dry-run reconciliation и идемпотентную
+  миграцию: draft-версии сделки заменяются одним deal-level маршрутом, пустой маршрут даёт
+  версию `not_required`, legacy answered/canceled помечаются `workflow_version=1`,
+  `is_current=false` с сохранением `offer_id`, невосстановимый `product_rule` даёт
+  `manual_review_required`;
+- операционная команда `python -m app.cli.approval_cutover` (внутри `app`, потому что
+  `scripts/` не попадает в образ); runbook — `docs/approval_cutover_runbook.md`;
+- deal-level сводка не превращает legacy approved/rejected историю в `not_required`:
+  при отсутствии current staged версии берётся последняя завершённая legacy версия с
+  признаком `is_legacy`;
+- после включения v2 approval-level `email_token` больше не принимается; физическое
+  удаление legacy-колонок остаётся за Ticket 15.
+
 ## Ticket 13 — Адаптировать создание заказов в ОП к deal-level approval
 
 Цель: после единого решения по сделке создать отдельный заказ для каждого
