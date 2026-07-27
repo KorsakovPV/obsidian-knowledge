@@ -146,6 +146,7 @@ app/
 - `DealService.request_approval()` запускает deal-level state machine. Активация сохраняет stage token и transactional outbox в той же транзакции; SMTP выполняется отдельным worker после commit.
 - `DealService.receive_mail()` для `workflow_version >= 2` находит историю stage token по SHA-256 hash, проверяет stage/deal/sender и вызывает общие `ApprovalWorkflowService.approve/reject`. Legacy approval token остаётся только для workflow v1 до cleanup migration.
 - Delivery email хранится в nullable `lkm_users.email`; валидный `ad_login` используется только как legacy fallback. Token TTL по умолчанию 14 дней, SLA стадии — 3 дня с отдельными настройками по stage code.
+- Некорректный Fernet key отклоняется при загрузке settings; повреждённый outbox ciphertext отменяет только соответствующую delivery. Permanent ошибки входящего stage email помечаются seen, transient ошибки повторяются.
 - Ответы согласующих приходят по email и разбираются IMAP-поллером
   (`approval_email_composer.py`, `email_contents.py`, `email_transport.py`).
 - **Доступность действий** над сделкой/оффером вычисляется паттерном resolver'ов:

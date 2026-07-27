@@ -425,6 +425,8 @@ DoD:
 - В `lkm_users` добавляется nullable `email`, валидируемый через `EmailStr`. Для legacy users разрешён fallback на `ad_login` только когда он является валидным email; иначе activation блокируется понятной доменной ошибкой. Администратор может задать или очистить delivery email отдельной ручкой.
 - Начальный `stage_token_ttl` — 14 календарных дней. Начальный SLA всех stage codes — 3 календарных дня; настройки разделены по stage code и могут меняться без изменения workflow.
 - Raw token шифруется в outbox через Fernet. При включённом workflow v2 обязателен отдельный production secret `APPROVAL_WORKFLOW_OUTBOX_ENCRYPTION_KEY`; token hash и raw token запрещено логировать или возвращать API.
+- Fernet key валидируется при загрузке settings; с некорректным ключом v2 не запускается. Повреждённый ciphertext считается permanent delivery error: delivery отменяется с `InvalidEncryptedToken` и не блокирует остальную outbox batch.
+- Permanent email errors (`invalid_token`, `payload_mismatch`, `permission_denied`, `token_expired`) помечают IMAP message как seen. Только transient infrastructure/database errors остаются для повторной обработки.
 
 Что сделать:
 
@@ -498,56 +500,7 @@ DoD:
 - Тесты покрывают valid decision, stale/expired token, payload mismatch,
   repeated group reply и переход к следующей стадии.
 
-## Ticket 8 — API для задач согласующего
-
-Цель: дать фронту список КП, ожидающих решения текущего пользователя.
-
-Зависимости: Ticket 6 и Ticket 7.
-
-Что сделать:
-
-- Добавить `GET /api/v1/approval-stages/pending`.
-- Текущего LKM user брать из установленного auth middleware principal, не выполнять
-  повторную недоверенную идентификацию по query/body.
-- Единоличную stage показывать только при `assigned_user_id=current_user.id`.
-- Групповую stage (`assigned_user_id IS NULL`) показывать, если пользователь имеет
-  effective `required_permission`.
-- Возвращать только `status=pending`; сортировать по `due_at NULLS LAST`,
-  затем `requested_at`, поддержать `limit/offset`.
-- Response item должен содержать: `stage_id`, `stage_code`, `required_permission`,
-  `status`, `requested_at`, `due_at`, `approval_id`, `deal_id`, `deal_number`,
-  `deal_title`, `client_id`, `approval_version`, `subject_hash` и краткий ordered
-  list офферов/продуктов из approval snapshot.
-- Offers внутри response/snapshot сортировать стабильно по `(created_at, id)`.
-- Не возвращать `email_token` в API.
-- Реализовать SQL-фильтрацию в CRUD, а не загружать все стадии в память.
-- Стабилизировать пагинацию tie-breaker-ом `stage_id`; предпочтителен cursor по
-  `(due_at, requested_at, stage_id)`, либо эти поля обязательны в `ORDER BY` при
-  `limit/offset`. Задать default и максимальный `limit`.
-- Добавить API-тесты для single-holder, group permission, постороннего пользователя,
-  закрытой стадии и пагинации.
-- Добавить `POST /api/v1/approval-stages/{stage_id}/decision` с body
-  `{"decision": "approve | reject", "comment": "..."}` и обязательным
-  `Idempotency-Key`. Endpoint не принимает email token и вызывает тот же
-  `ApprovalWorkflowService`, что email consumer.
-- Для single-holder decision разрешён только текущему `assigned_user_id`; для group
-  stage — текущему holder effective permission. Авторизацию и status повторно
-  проверять внутри locked workflow-транзакции, не полагаться только на router guard.
-- Возвращать стабильный machine-readable `code`: `already_processed`,
-  `decision_conflict`, `invalid_status`, `not_assigned` или `permission_denied`.
-
-DoD:
-
-- Пользователь видит только доступные ему стадии.
-- Query одновременно фильтрует `approval.status=pending` и `stage.status=pending`.
-- Stage исчезает после decision/skip. После reassign single-holder stage исчезает
-  у прежнего assignee и появляется у нового; group stage через reassign не меняется.
-- Закрытые стадии и token не попадают в response.
-- Пагинация и порядок стабильны.
-- Есть API tests на permissions и isolation между пользователями.
-- Email и API decision дают одинаковые переходы/events; повтор одного
-  `Idempotency-Key` возвращает исходный результат, противоположное решение —
-  `decision_conflict`.
+Htfkb
 
 ## Ticket 9 — Добавить аудит переходов workflow
 
