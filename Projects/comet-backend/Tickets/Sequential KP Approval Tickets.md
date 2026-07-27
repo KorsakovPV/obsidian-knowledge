@@ -590,46 +590,69 @@ DoD:
 
 ## Ticket 9 — Добавить аудит переходов workflow
 
-Цель: хранить неизменяемую историю каждого перехода стадии до появления управляющих
-API.
+Цель: хранить неизменяемую ordered историю каждого фактического перехода стадии.
 
-Зависимости: интерфейс state machine из Ticket 6. Feature flag v2 нельзя включать,
-пока state machine не пишет audit events из этого тикета.
+Зависимости: Ticket 6–8. Feature flag v2 нельзя включать, пока state machine не
+пишет audit events из этого тикета.
+
+Принятые архитектурные решения:
+
+- Добавить `approval_stage_events`: `id`, `stage_id`, `approval_id`,
+  `actor_user_id` nullable для системного действия, `action`, `old_status`,
+  `new_status`, `reason`, `metadata JSONB`, `sequence`, `source`, `source_id`,
+  `created_at`.
+- `source`: `system | api | email`. Для первичного API event
+  `source_id=Idempotency-Key`, для email event — `ReceivedEmailSchema.id`.
+- Гарантировать partial unique index `(approval_id, stage_id, actor_user_id,
+  source, source_id) WHERE source_id IS NOT NULL`. Область соответствует API-команде
+  конкретного actor-а по конкретной stage. Отдельное поле `idempotency_key` в event не хранить:
+  persisted response API остаётся в `approval_stage_decision_requests` Ticket 8.
+- Одно внешнее решение может создать несколько events. Все изменённые им стадии
+  сохраняют одинаковые actor/source/source_id и различаются stage_id; причинный source
+  дополнительно сохраняется в metadata. Полностью автоматические переходы имеют
+  `source=system` и `source_id=null`.
+- `resend` не создаёт stage event, потому что status стадии не меняется. История
+  resend хранится в token и notification generations Ticket 7.
 
 Что сделать:
 
-- Добавить `approval_stage_events`: `id`, `stage_id`, `approval_id`, `actor_user_id`
-  nullable для системного действия, `action`, `old_status`, `new_status`,
-  `reason`, `metadata JSONB`, `sequence`, `idempotency_key`, `created_at`.
-- Ввести enum action: `started`, `approved`, `rejected`, `skipped`, `reassigned`,
+- Ввести actions: `started`, `approved`, `rejected`, `skipped`, `reassigned`,
   `canceled`, `superseded`, `activation_failed`, `activation_retried`.
-- Гарантировать `UNIQUE(approval_id, sequence)` и уникальность непустого
-  `idempotency_key`. Историю сортировать по `sequence`, а не только по timestamp.
+- Гарантировать `UNIQUE(approval_id, sequence)`. Историю сортировать по sequence;
+  sequence вычислять только под существующим lock approval.
 - Добавить индексы `(stage_id, created_at)` и `(approval_id, created_at)`.
-- Каждая операция `ApprovalWorkflowService` должна создавать event в той же
-  транзакции, что и изменение stage.
-- Для reassign сохранять old/new user id и email в `metadata`; для email decision —
-  `ReceivedEmailSchema.id` как source id. Для API использовать `Idempotency-Key`;
-  уникальность задавать по `(approval_id, source, source_id)`, чтобы ключи разных
-  каналов не конфликтовали. В metadata хранить
-  `schema_version`, approval version и subject hash.
-- Для reject/cancel создавать отдельный event каждого реально изменённого stage,
-  а не один агрегатный event без истории отменённых стадий.
-- Event-записи не обновлять и не удалять отдельно от cascade удаления всего approval.
-  Routine rebuild/supersede не удаляет approvals/stages/events. Hard delete возможен
-  только по отдельной retention policy удаления всей сделки; это ограничение явно
-  документировать.
-- Добавить read schema и включить ordered history в детальный response approval.
-- Добавить model, CRUD и integration tests для каждого action.
+- Каждая операция `ApprovalWorkflowService` создаёт events в той же транзакции,
+  что stage/token/outbox transition.
+- `approve/reject` сохраняют actor, comment и source. Автоматическая активация
+  следующей стадии создаёт отдельный system event.
+- `reject/cancel` создают отдельный `canceled` event каждой реально изменённой
+  waiting/pending стадии.
+- `skip` сохраняет actor и reason. `reassign` сохраняет old/new user id и email в
+  metadata. `retry_activation` создаёт `activation_retried`; recoverable ошибка
+  назначения следующей стадии — `activation_failed`.
+- Lifecycle supersede создаёт `superseded` для каждой стадии, статус которой реально
+  изменился на canceled. Завершённые стадии не получают фиктивного события.
+- Во всех metadata хранить `schema_version`, approval version и subject hash.
+- Event rows не обновлять и не удалять отдельно от cascade удаления всего approval.
+  Routine rebuild/supersede сохраняет историю завершённых версий. Hard delete
+  допускается только отдельной retention policy всей сделки.
+- Добавить read schema и ordered `events` в детальный `ApprovalSchema`; CRUD должен
+  eager-load history до закрытия async session.
+- Добавить model/schema/workflow/lifecycle/email tests для каждого action,
+  source/source_id, sequence, metadata и идемпотентного повтора.
 
 DoD:
 
-- Для каждого фактического перехода есть ровно один event.
-- Повторный идемпотентный запрос не создаёт второй event.
-- Два конкурентных действия не получают одинаковый sequence и не создают два
-  фактических перехода.
-- По reassign видно прежнего и нового assignee, по skip — actor и reason.
-- Изменение stage и создание event атомарны.
+- Для каждого фактического перехода есть ровно один event; repeated decision не
+  создаёт второй event.
+- Два конкурентных действия сериализованы approval lock и защищены уникальностью
+  `(approval_id, sequence)`.
+- API/email events содержат actor и source id для каждой изменённой stage и не
+  конфликтуют благодаря stage/actor scope partial unique index.
+- По reassign видны прежний/новый assignee, по skip — actor/reason.
+- Reject/cancel/supersede оставляют отдельную историю каждой изменённой стадии.
+- Изменение stage, token/outbox и event атомарны в одной `AsyncSession` transaction.
+- Детальный response approval возвращает события строго по sequence.
 
 ## Ticket 10 — API для skip и reassign
 
@@ -675,9 +698,10 @@ skip/reassign автоматически не выдаются.
   token/outbox создаются атомарно.
 - Для 403, stage not found, invalid status, invalid target и empty reason добавить
   отдельные пользовательские ошибки со стабильными machine-readable codes.
-- Добавить retry/resend operations для `blocked` approval и истёкшего token либо
-  явно закрыть их отдельным административным endpoint с теми же permission/audit
-  требованиями.
+- Публичные `retry_activation` для `blocked` approval и `resend` для истёкшего
+  token отложены до отдельного административного API-тикета. До утверждения
+  отдельных permissions и audit-контракта Ticket 10 не публикует эти endpoints;
+  внутренние workflow operations сохраняются для будущего orchestration.
 - Добавить API и service tests.
 
 DoD:
