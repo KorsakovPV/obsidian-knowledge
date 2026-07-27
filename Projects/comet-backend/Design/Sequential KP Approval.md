@@ -32,6 +32,12 @@ tags: [project, design, approval, lkm, rbac]
 Оставшийся разрыв — переход к единому deal-level approval, stage-level email token
 и транзакционной state machine.
 
+Tickets 1–5 считаются завершёнными промежуточными этапами и не переоткрываются
+после уточнения границы агрегата. Переход к deal-level модели, адаптация builder-а,
+единой юридической стадии и activation orchestration выполняются в Ticket 6 новыми
+миграциями и forward-изменениями. Stage token и outbox относятся к Ticket 7,
+остальные части перехода распределены по Tickets 8–15.
+
 Принятые решения для реализации:
 
 - approval-процесс принадлежит сделке; все offers рассматриваются совместно в одном

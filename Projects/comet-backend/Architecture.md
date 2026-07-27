@@ -140,7 +140,9 @@ app/
   последовательного workflow: stage code, position, required permission, assignee,
   stage token, skip/audit fields.
 - `OfferService._build_approval_create_data()` подключает offer-level route builder
-  и создаёт стадии, но целевая граница перед Ticket 6 изменена на один approval сделки.
+  и создаёт стадии как промежуточный результат Tickets 1–5. Переход к одному
+  approval сделки и перенос orchestration на deal-level выполняются в Ticket 6;
+  завершённые тикеты и применённые миграции задним числом не переписываются.
 - `DealService.request_approval()` активирует первую waiting stage через
   `ApprovalStageActivationService`, выбирает single/group recipients и отправляет
   письмо каждому recipient. Письмо пока использует legacy `approval.email_token`;
