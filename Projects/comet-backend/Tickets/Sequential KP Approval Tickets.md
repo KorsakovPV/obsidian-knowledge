@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-27
+updated: 2026-07-28
 source: docs/lkm_role_model.md
 tags: [project, tickets, approval, lkm, rbac]
 ---
@@ -419,6 +419,12 @@ DoD:
 
 Источник истины — запись истории stage token. Остальные идентификаторы проверяются
 на соответствие найденной стадии и используются для понятной диагностики.
+
+Принятые решения:
+
+- В `lkm_users` добавляется nullable `email`, валидируемый через `EmailStr`. Для legacy users разрешён fallback на `ad_login` только когда он является валидным email; иначе activation блокируется понятной доменной ошибкой. Администратор может задать или очистить delivery email отдельной ручкой.
+- Начальный `stage_token_ttl` — 14 календарных дней. Начальный SLA всех stage codes — 3 календарных дня; настройки разделены по stage code и могут меняться без изменения workflow.
+- Raw token шифруется в outbox через Fernet. При включённом workflow v2 обязателен отдельный production secret `APPROVAL_WORKFLOW_OUTBOX_ENCRYPTION_KEY`; token hash и raw token запрещено логировать или возвращать API.
 
 Что сделать:
 
