@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-23
+updated: 2026-07-27
 tags: [project, api, rest, fastapi]
 ---
 
@@ -32,6 +32,16 @@ tags: [project, api, rest, fastapi]
 | POST | `/auth/login` | Аутентификация пользователя |
 | GET  | `/auth/user` | Текущий пользователь |
 | POST | `/auth/logout` | Выход |
+
+## Approval stages — `/approval-stages`
+
+| Метод | Путь | Назначение |
+|-------|------|-----------|
+| GET | `/approval-stages/pending?limit=50&offset=0` | Доступные текущему LKM user pending-стадии |
+| POST | `/approval-stages/{stage_id}/decision` | Решение `approve/reject`; требует `Idempotency-Key` |
+
+Decision endpoint не принимает email token или user id. Доступ проверяется повторно
+в locked workflow-транзакции; результат idempotency key хранится в БД.
 
 ## Deals (сделки) — `/deals`
 

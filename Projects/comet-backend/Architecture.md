@@ -147,6 +147,8 @@ app/
 - `DealService.receive_mail()` для `workflow_version >= 2` находит историю stage token по SHA-256 hash, проверяет stage/deal/sender и вызывает общие `ApprovalWorkflowService.approve/reject`. Legacy approval token остаётся только для workflow v1 до cleanup migration.
 - Delivery email хранится в nullable `lkm_users.email`; валидный `ad_login` используется только как legacy fallback. Token TTL по умолчанию 14 дней, SLA стадии — 3 дня с отдельными настройками по stage code.
 - Некорректный Fernet key отклоняется при загрузке settings; повреждённый outbox ciphertext отменяет только соответствующую delivery. Permanent ошибки входящего stage email помечаются seen, transient ошибки повторяются.
+- API задач согласующего фильтрует pending stages в SQL по trusted LKM principal. API decision повторно проверяет assignee/effective permission под lock и хранит persisted idempotency result в `approval_stage_decision_requests`.
+- TODO: добавить `offer.created_at` в будущие snapshot для полного ключа сортировки; до этого используется fallback по offer id. Audit events API/email остаются границей Ticket 9.
 - Ответы согласующих приходят по email и разбираются IMAP-поллером
   (`approval_email_composer.py`, `email_contents.py`, `email_transport.py`).
 - **Доступность действий** над сделкой/оффером вычисляется паттерном resolver'ов:

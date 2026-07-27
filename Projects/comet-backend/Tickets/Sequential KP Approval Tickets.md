@@ -500,7 +500,93 @@ DoD:
 - Тесты покрывают valid decision, stale/expired token, payload mismatch,
   repeated group reply и переход к следующей стадии.
 
-Htfkb
+## Ticket 8 — API для задач согласующего
+
+Цель: дать фронту список стадий, ожидающих решения текущего пользователя, и единый
+API-вход в ту же state machine, которую использует email consumer. API не принимает
+email token и не создаёт отдельную логику переходов.
+
+Зависимости: Ticket 6 и Ticket 7.
+
+Принятые архитектурные решения:
+
+- Identity берётся только из trusted principal (`request.state.lkm_user`),
+  установленного auth middleware. `user_id`, email или login из query/body не
+  принимаются и не используются для авторизации.
+- Список задач фильтруется в SQL. Single-holder stage доступна только при
+  `assigned_user_id=current_user.id`; group stage с `assigned_user_id IS NULL` —
+  при наличии `required_permission` в effective permissions principal-а.
+- Decision выполняется в одной workflow-транзакции и под существующим lock order
+  `deal → current approval → active stage`. Router guard не считается достаточной
+  защитой: после lock single assignee или effective group permission читаются и
+  проверяются повторно по актуальному состоянию БД.
+- Идемпотентность API-команды хранится отдельно от будущего audit log в таблице
+  `approval_stage_decision_requests`. Ключ имеет область
+  `(stage_id, actor_user_id, idempotency_key)`, поэтому одинаковая строка ключа у
+  разных пользователей или стадий не конфликтует.
+- Первая команда сохраняет decision и полный стабильный response. Повтор того же
+  `Idempotency-Key` с тем же decision возвращает сохранённый response без нового
+  перехода. Тот же ключ с противоположным decision возвращает
+  `decision_conflict`. Изменение comment при повторе не создаёт новую команду:
+  источником истины остаётся результат первого запроса.
+- `approval_stage_decision_requests` обеспечивает command replay после restart и
+  между несколькими application workers. Ticket 9 отдельно добавляет immutable
+  transition events; event не заменяет сохранённый API response.
+
+Что сделать:
+
+- Добавить `GET /api/v1/approval-stages/pending`.
+- Одновременно фильтровать `approval.status=pending` и `stage.status=pending`.
+- Сортировать по `due_at ASC NULLS LAST`, затем `requested_at ASC NULLS LAST`, затем
+  `stage_id ASC`. Поддержать offset pagination: `limit` default `50`, maximum `100`,
+  `offset` default `0`. `stage_id` является обязательным tie-breaker-ом.
+- Response item должен содержать `stage_id`, `stage_code`, `required_permission`,
+  `status`, `requested_at`, `due_at`, `approval_id`, `deal_id`, `deal_number`,
+  `deal_title`, `client_id`, `approval_version`, `subject_hash` и краткий ordered
+  list offers/products только из immutable `approval.subject_snapshot`.
+- Не читать изменяемые live offers для построения ответа. Не возвращать raw token,
+  token hash, `email_token` или данные notification outbox.
+- Добавить `POST /api/v1/approval-stages/{stage_id}/decision` с обязательным header
+  `Idempotency-Key` длиной 1–255 символов и body
+  `{"decision": "approve | reject", "comment": "..."}`. Comment nullable,
+  maximum 4000 символов.
+- Endpoint вызывает `ApprovalWorkflowService.approve/reject`, используемый email
+  consumer-ом, и возвращает `stage_id`, `approval_id`, `outcome` и стабильный code.
+- Поддержать codes: `processed`, `already_processed`, `decision_conflict`,
+  `invalid_status`, `not_assigned`, `permission_denied`.
+- Для нового запроса сначала проверить persisted idempotency result, затем под lock
+  проверить status и доступ actor-а. Закрытая stage не выполняет переход повторно;
+  допустимый повтор исходной команды возвращает `already_processed` или ранее
+  сохранённый результат.
+- После decision/skip stage автоматически исчезает из pending query. После reassign
+  single-holder stage исчезает у прежнего assignee и появляется у нового. Group
+  stage остаётся permission-based и через reassign не изменяется.
+- Добавить API, CRUD, model и workflow tests для single-holder, group permission,
+  постороннего пользователя, закрытой стадии, reassign visibility, стабильной
+  пагинации, replay и противоположного решения с тем же idempotency key.
+
+Отложенные решения:
+
+- TODO (forward ticket после Ticket 8): snapshot Ticket 6 пока не гарантирует
+  `offer.created_at`. Offers сортируются по `(created_at, id)`, когда timestamp есть,
+  и стабильно по `id` для legacy snapshot. Уже frozen snapshots не переписывать.
+- TODO (Ticket 9): email/API используют общую state machine, но одинаковые audit
+  events обоих каналов появляются только после добавления
+  `approval_stage_events`. API idempotency table из Ticket 8 при этом сохраняется.
+
+DoD:
+
+- Пользователь видит только доступные ему pending stages; фильтр одновременно
+  ограничивает status approval и stage.
+- Закрытые стадии и любые token-поля отсутствуют в pending response.
+- Порядок и offset pagination детерминированы обязательным `stage_id` tie-breaker-ом.
+- Decision повторно авторизуется внутри locked workflow-транзакции и использует те
+  же переходы, что email decision.
+- Persisted idempotency переживает restart/несколько workers: повтор возвращает
+  исходный response, противоположное решение даёт `decision_conflict`.
+- Невалидный actor не меняет stage, approval, token или outbox.
+- Тесты фиксируют permissions/isolation, pagination, visibility после закрытия и
+  reassign, а также idempotent replay/conflict.
 
 ## Ticket 9 — Добавить аудит переходов workflow
 
