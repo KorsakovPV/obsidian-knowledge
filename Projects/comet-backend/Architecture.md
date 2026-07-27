@@ -123,7 +123,7 @@ app/
   рассматривает все offers совместно. Завершённые процессы сохраняются как версии;
   partial unique index допускает только один current approval. Маршрут выбирается
   по максимальной скидке среди всех цен сделки; особые условия любого offer
-  добавляют stage `lawyer`.
+  добавляют mandatory stages `product_owner → lawyer`.
 - Approval фиксирует immutable `subject_snapshot` и `route_context`, поэтому email,
   история решения и создание заказов используют согласованные, а не текущие live data.
 - Активная стадия формирует одно письмо со всей сделкой и всеми offers. Для group

@@ -72,7 +72,7 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `email_token?`, `email_token_expires_at?` — для подтверждения согласования по ссылке из письма.
 - Связь `stages` загружается как список `ApprovalStageModel`, отсортированный по `position`.
 - Маршрут строится по максимальной скидке среди всех offers сделки; особые условия
-  любого offer добавляют одну mandatory stage `lawyer`.
+  любого offer добавляют обязательную цепочку `product_owner → lawyer`;
 - После start snapshot неизменяем; повторное согласование создаёт следующую version.
 
 ## ApprovalStage — `approval_stages`

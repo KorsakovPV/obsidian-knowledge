@@ -134,8 +134,8 @@ DoD:
 - Позиция `lawyer` задаётся отдельной конфигурацией порядка стадий, а не условием
   включения. Начальный порядок: `presale → lead → product_owner → lawyer →
   sales_director → finance_director`, чтобы директора получали документ после визы
-  юриста. Если скидочного согласования нет, но особые условия есть, маршрут состоит
-  только из `lawyer`.
+  юриста. Это исторический scope Ticket 4; обязательная стадия `product_owner`
+  перед `lawyer` добавлена уточнением Ticket 6.
 - При `null`, пустой или состоящей только из пробелов строке стадия `lawyer` не создаётся.
 
 Что сделать:
@@ -240,7 +240,7 @@ builder-а, юридической стадии и activation orchestration, н�
   офферов сделки. Скидки не суммируются и не усредняются: самый строгий необходимый
   маршрут применяется ко всей сделке.
 - Если хотя бы у одного оффера есть непустые после `strip()` особые условия, общий
-  маршрут сделки содержит одну обязательную стадию `lawyer`.
+  маршрут сделки содержит две обязательные стадии: `product_owner`, затем `lawyer`.
 - Согласующий получает контекст всей сделки и всех её офферов, чтобы оценивать их
   совместно, включая компенсацию низкомаржинального оффера прибыльными офферами.
 - Внутри approval стадии выполняются последовательно по сохранённому `position`.
@@ -366,7 +366,8 @@ DoD:
 - Решение относится к immutable snapshot; route context объясняет, почему каждая
   стадия попала в маршрут.
 - Максимальная скидка любого оффера определяет единый скидочный маршрут сделки.
-- Особые условия любого оффера добавляют ровно одну mandatory stage `lawyer`.
+- Особые условия любого оффера добавляют ровно одну mandatory stage `product_owner`
+  и ровно одну mandatory stage `lawyer`.
 - Для одной активной стадии формируется одно письмо с контекстом всей сделки и всех
   офферов; отдельные письма по офферам не создаются.
 - Порядок `lawyer` меняется через конфигурацию `STAGE_ORDER`; директора получают
@@ -382,6 +383,21 @@ DoD:
 - Cancel и repeated decision инвалидируют возможность сдвинуть процесс старым token.
 - Тесты покрывают start, approve chain, reject, skip, reassign, cancel,
   no-next-stage и concurrent/repeated decision.
+
+Статус реализации на 2026-07-27:
+
+- добавлена forward migration deal-level полей, version/current constraints,
+  `is_optional` и partial unique index одной pending stage;
+- builder переведён на все offers сделки; особые условия любого offer добавляют
+  mandatory `product_owner → lawyer`;
+- добавлены immutable snapshot/hash, route context и lifecycle draft/rebuild;
+- добавлен `ApprovalWorkflowService` с переходами start/approve/reject/skip/reassign/
+  cancel/retry_activation и recoverable `blocked`;
+- request endpoint переключён на current deal-level approval, SMTP внутри workflow
+  не вызывается;
+- v2 writes закрыты `approval_workflow_v2_enabled`, по умолчанию флаг выключен;
+- persisted stage token/transactional outbox выполняются в Ticket 7, audit events —
+  в Ticket 9.
 
 ## Ticket 7 — Перевести email approval на stage token
 
@@ -801,11 +817,11 @@ API, Order Processing и БД после unit-тестов отдельных т
 - Добавить DB integration test полного маршрута
   `presale -> lead -> product_owner -> lawyer -> sales_director -> finance_director`
   при одновременных discount/product/legal triggers.
-- Проверить отдельные маршруты: no approval, только lawyer, только product owner,
-  скидочная цепочка без lawyer.
+- Проверить отдельные маршруты: no approval, цепочка `product_owner → lawyer` без
+  скидки и скидочная цепочка без особых условий.
 - Проверить deal с несколькими offers: создаётся одна current approval version,
   максимальная скидка выбирает общий маршрут, а особые условия любого offer
-  добавляют одну `lawyer` stage.
+  добавляют одну цепочку `product_owner → lawyer`.
 - Проверить, что одна активная stage использует один snapshot/token и одно логическое
   письмо со всеми offers; group holders получают копии одного сообщения.
 - Проверить single-holder и group assignee, включая первый ответ из группы.
