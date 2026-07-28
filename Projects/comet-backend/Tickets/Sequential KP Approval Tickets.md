@@ -1006,8 +1006,10 @@ DoD:
   Locked-чтения в `ApprovalWorkflowService` и `ApprovalLifecycleService` выполняются с
   `populate_existing=True`; теперь проигравшая команда получает предсказуемый
   `already_processed`;
+- пакет автоматически помечается маркером `integration` (hook `pytest_collection_modifyitems`
+  в его conftest), поэтому без PostgreSQL запускается `pytest -m "not integration"`;
 - набор использует одну тестовую БД и очищает её целиком, поэтому не запускается
-  параллельно (`pytest -n`) без отдельной базы на каждый worker.
+  параллельно (`pytest -n` или два одновременных прогона) без отдельной базы на каждый worker.
 
 ## Ticket 15 — Удалить legacy approval contract после стабилизации
 
