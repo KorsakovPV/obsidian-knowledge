@@ -838,7 +838,8 @@ DoD:
   ограничений;
 - `ApprovalMaintenanceService` реализует persisted flag и advisory lock `21642164`
   (exclusive у cutover, `pg_try_advisory_xact_lock_shared` в write-транзакциях);
-  проверки встроены в request approval, rebuild, API стадий, outbox worker и IMAP consumer;
+  проверки встроены в request approval, rebuild, мутации deal/offer (`ApprovalSubjectGuard`,
+  отказ до записи), API стадий, обработку stage token из письма, outbox worker и IMAP consumer;
 - `ApprovalCutoverService` выполняет preflight, dry-run reconciliation и идемпотентную
   миграцию: draft-версии сделки заменяются одним deal-level маршрутом, пустой маршрут даёт
   версию `not_required`, legacy answered/canceled помечаются `workflow_version=1`,
@@ -896,6 +897,27 @@ DoD:
   создаёт дублей.
 - В ОП уходят именно согласованные данные и особые условия соответствующего offer.
 - Partial failure восстанавливается повторным запуском только для неуспешных offers.
+
+Статус реализации на 2026-07-28:
+
+- миграция `e5f6a7b8c9db` добавляет `offer_implementations` с границей
+  `UNIQUE(approval_id, offer_id)` и уникальным `external_approval_id`; `offer_order`
+  не меняется и остаётся контрактом ответа оффера;
+- `build_external_approval_id` сворачивает составной ключ `(approval_id, offer_id)` в
+  детерминированный UUIDv5 от фиксированного namespace; retry после таймаута и повторный
+  запуск используют то же значение;
+- `OfferImplementationService.create_for_deal` требует `answered/approve` текущей staged
+  версии, обходит offers одобренного `subject_snapshot`, строит payload из snapshot и
+  сверяет живой оффер с одобренным предметом (`ApprovalSubjectMismatchError`);
+  операционные поля (`contract_id`, стафферы) берутся из актуальной сделки;
+- per-offer хранятся status/attempts/last_error/external id/данные БЗ; успешные строки
+  переживают повтор, ошибка одного оффера не отменяет остальные;
+- `DealService.implement_deal` выбирает deal-level путь по `approval_summary`, оставляет
+  legacy offer-level ветку до Ticket 15 и при partial failure бросает
+  `DealImplementationIncompleteError` (HTTP 409) со списком неуспешных offers;
+- `special_conditions` уходит в ОП без преобразований; отдельная трассировка
+  approval/offer в payload закрыта настройкой `ORDER_PROCESSING_SEND_EXTERNAL_CONTEXT`
+  (по умолчанию выключена до согласования контракта с ОП).
 
 ## Ticket 14 — Интеграционные и конкурентные тесты workflow
 
