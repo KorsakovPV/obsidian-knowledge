@@ -100,6 +100,10 @@ ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблиц
 - `status` (`ApprovalStageStatus`): `waiting` | `pending` | `approved` | `rejected` |
   `skipped` | `canceled`.
 - `is_optional` — можно ли пропустить стадию; mandatory-стадии нельзя skip даже с правом.
+- `scope_product_ids` (JSONB) — продукты, вызвавшие включение стадии. Заполняется только
+  у `product_owner` и фиксируется вместе с маршрутом: активация происходит позже, и
+  повторный вывод причины дал бы другой состав получателей. Пусто — стадия к продукту
+  не привязана.
 - `assigned_user_id?` → `lkm_users`, `assigned_email?` — заполняются только для
   единоличной стадии; у групповой остаются `NULL`, получатели считаются по
   `required_permission`.
@@ -201,6 +205,10 @@ stage несколько delivery rows относятся к одной notifica
   `manager` | `presale` | `sales_lead` | `sales_director` | `finance_director` | `product_owner` | `lawyer` | `admin`), `first_login_at?`, `created_by_admin?`.
 - `lkm_permissions` (`codename`, `name`, 22 записи), `lkm_roles` (`codename`, `name`).
 - Связки: `lkm_role_permissions` (набор прав роли), `lkm_user_permissions` (персональные права).
+- `lkm_user_permissions.scope_product_id` — зона ответственности назначения: `NULL` даёт
+  право на все продукты, заполненный ограничивает его одним продуктом. Уникальность
+  задана двумя частичными индексами: обычный ключ с nullable-колонкой не запретил бы два
+  глобальных назначения, потому что NULL в Postgres не сравнивается сам с собой.
 - Пермиссии/роли и наборы засеваются миграциями `..._add_lkm_permissions.py` и `..._bt02_roles_permissions.py`.
 - Эффективные права = пермиссии роли ∪ персональные права. Полная спецификация —
   в исследовании [[LKM Role Model]]; проверка прав — в [[Architecture]].

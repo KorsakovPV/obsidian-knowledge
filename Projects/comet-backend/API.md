@@ -85,6 +85,12 @@ Skip доступен только для optional stage, reassign — толь�
 | DELETE | `/offers/{offer_id}` | Удалить оффер |
 | DELETE | `/offers/by-deal/{deal_id}` | Удалить офферы сделки |
 
+Тариф оффера обязан содержать `price` — цену продажи, от которой считается скидка и
+строится маршрут согласования. Тариф без неё отклоняется с кодом
+`offer_tariff_price_required`, тариф без цены в прайсе классификатора —
+`offer_tariff_price_not_found` (оба 400). `partner_client_price` остаётся в контракте как
+цена конечного потребителя и в бизнес-логике согласования не участвует.
+
 ## Orders (заказы) — `/orders`
 
 | Метод | Путь | Назначение |
@@ -155,7 +161,7 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 | POST  | `/lkm/users` | Добавить пользователя из AD в ЛКМ | `add_users` |
 | GET   | `/lkm/users/{user_id}` | Карточка пользователя + эффективные пермиссии | любой из `add_users` / `change_user_roles` / `change_permissions` |
 | PATCH | `/lkm/users/{user_id}/role` | Сменить роль (не свою УЗ; сбрасывает персональные права) | `change_user_roles` |
-| PATCH | `/lkm/users/{user_id}/permissions` | Заменить персональные пермиссии (пустой список — сброс) | `change_permissions` |
+| PATCH | `/lkm/users/{user_id}/permissions` | Заменить персональные пермиссии: `permission_codenames` — на все продукты, `scoped_permissions` (`codename` + `product_id`) — на конкретный продукт | `change_permissions` |
 
 ## ЛКМ: справочники — `/lkm/roles`, `/lkm/permissions`
 
