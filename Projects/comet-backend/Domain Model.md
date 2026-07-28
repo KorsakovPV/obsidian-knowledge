@@ -51,6 +51,10 @@ ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблиц
 
 - `product_id` (int) — продукт/услуга; `deal_id` → `deal`.
 - `technical_parameters` (JSONB), `tariffs` (JSONB) — тех. параметры и тарифы бланка заказа.
+  Тариф хранит присланные клиентом `pk`, `quantity`, `price` (цена продажи),
+  `partner_client_price` (цена конечного потребителя, в бизнес-логике не участвует),
+  `group_code` и рассчитанные сервером `base_price`, `base_price_source`,
+  `discount_percent` — по ним route builder выбирает скидочный маршрут.
 - `created_by`, `updated_by?`.
 - Связи: `deal`, `order` (0..1, `OfferOrder`); `approval` (0..1) — legacy offer-level
   связь, помеченная TODO Ticket 15.
