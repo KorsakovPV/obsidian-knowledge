@@ -964,6 +964,51 @@ DoD:
 - Нет flaky ожиданий через `sleep`; конкурентные тесты синхронизируются barrier-ом.
 - `poetry run pytest` и `poetry run make check` проходят.
 
+Статус реализации на 2026-07-28:
+
+- добавлен пакет `tests/integration/` на реальном PostgreSQL: схема поднимается
+  `alembic upgrade head`, между тестами выполняется `TRUNCATE` всех таблиц метаданных с
+  повторным посевом справочников `lkm_permissions`/`lkm_roles`, а пул соединений
+  закрывается после каждого теста (pytest-asyncio создаёт новый event loop);
+- `tests/integration/conftest.py` содержит фабрику сделок/офферов/пользователей ЛКМ,
+  helper `start_deal_approval` (та же пара `prepare_for_start` + `start`, что и
+  `DealService.request_approval`, без сетевой сборки ответа сделки), расшифровку raw
+  stage token из outbox и fake SMTP-отправителя;
+- `test_approval_routes_db.py` — полный маршрут при одновременных discount/product/legal
+  триггерах, `not_required`, цепочка `product_owner → lawyer` без скидки, скидочная цепочка
+  без особых условий, сделка с несколькими offers (одна версия, максимальная скидка, одна
+  цепочка `product_owner → lawyer`), пересборка draft без новой версии;
+- `test_approval_workflow_db.py` — старт с одним token/уведомлением и всеми offers, single
+  и group assignee, holder permission через роль, полная цепочка approve, reject с отменой
+  остальных стадий, idempotent replay и `decision_conflict`, blocked + `retry_activation`,
+  rollback при ошибке assignee и при ошибке записи event, неизменность snapshot после
+  старта, supersede/version history, partial unique index текущей версии и единственной
+  pending-стадии;
+- `test_approval_email_db.py` — approve/reject письмом, expired/stale token, payload
+  mismatch, неизвестный token, отправитель без прав, повторный ответ группы, единоличная
+  стадия принимает решение только с назначенного адреса;
+- `test_approval_concurrency_db.py` — barrier-синхронизированные гонки: два API-решения,
+  email против API, decision против skip и против reassign, двойной старт, конкурентные
+  rebuild/start, запрет skip обязательной стадии;
+- `test_approval_delivery_db.py` — retry/идемпотентность outbox, частичная group-доставка,
+  отмена неотправленных копий при закрытии стадии, пауза worker-а во время cutover,
+  `resend` с новой generation без повторной активации стадии;
+- `test_approval_stage_tasks_db.py` — skip/reassign с audit events и повторной проверкой
+  прав внутри транзакции, запрет reassign групповой стадии, стабильная пагинация pending,
+  изменение состава группы во время pending, исчезновение закрытой стадии из задач;
+- `test_deal_implementation_db.py` — отдельный заказ ОП на каждый offer с детерминированными
+  `external_approval_id`, повторный запуск без дублей, partial failure с повторной попыткой
+  только неуспешного оффера, восстановление после таймаута тем же ключом, отказ при
+  расхождении live-оффера с одобренным snapshot;
+- найден и исправлен дефект конкурентности: чтение под `FOR UPDATE` возвращало объекты из
+  identity map, прочитанные до блокировки, поэтому email-решение после победившего
+  API-решения повторно активировало следующую стадию и падало на partial unique index.
+  Locked-чтения в `ApprovalWorkflowService` и `ApprovalLifecycleService` выполняются с
+  `populate_existing=True`; теперь проигравшая команда получает предсказуемый
+  `already_processed`;
+- набор использует одну тестовую БД и очищает её целиком, поэтому не запускается
+  параллельно (`pytest -n`) без отдельной базы на каждый worker.
+
 ## Ticket 15 — Удалить legacy approval contract после стабилизации
 
 Цель: завершить expand/contract migration только после успешной эксплуатации v2.
