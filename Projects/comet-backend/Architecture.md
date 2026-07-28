@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-27
+updated: 2026-07-28
 tags: [project, architecture, fastapi]
 ---
 
@@ -60,6 +60,13 @@ app/
 - `ClassificatorSettings` (`CLASSIFICATOR_`), `CustomersSettings` (`CUSTOMERS_`),
   `OrderProcessingSettings` (`Order_Processing_`), `Bitrix24Settings` (`BITRIX_`) — интеграции.
 - `S3Settings` (`S3_`), `SMTPSettings` (`SMTP_`), `IMAPSettings` (`IMAP_`).
+- `ApprovalWorkflowSettings` (`APPROVAL_WORKFLOW_`) — Fernet-ключ шифрования outbox,
+  TTL stage token (14 дней), SLA по stage code (3 дня), размер пачки и backoff worker-а.
+  Некорректный ключ отклоняется при загрузке настроек, `ensure_ready()` не даёт
+  запустить v2 без него.
+- Флаги: `APP_APPROVAL_WORKFLOW_V2_ENABLED` — включение staged workflow;
+  `APP_DEBUG_EMAIL_REDIRECT` — переадресация писем согласования в debug-режиме;
+  `ORDER_PROCESSING_SEND_EXTERNAL_CONTEXT` — трассировка approval/offer в payload ОП.
 - Таймзона по умолчанию — `Europe/Moscow`.
 
 ## Аутентификация
@@ -114,6 +121,11 @@ app/
   (`main.py`): раз в 2 минуты `DealService.receive_mail()` забирает письма-ответы
   согласования из IMAP-ящика. Ошибки логируются, цикл не падает; завершается через
   `CancelledError` при остановке приложения.
+- Там же при включённом `approval_workflow_v2_enabled` стартует `poll_approval_outbox()`:
+  `ApprovalNotificationWorker.process_pending()` разбирает transactional outbox
+  (`FOR UPDATE SKIP LOCKED`, retry с экспоненциальным backoff) и отправляет SMTP уже
+  после commit workflow-транзакции. Во время cutover worker останавливается по
+  maintenance flag.
 
 ## Согласование (approvals) и «действия»
 
@@ -133,22 +145,44 @@ app/
 - State machine, audit, token history и notification outbox используют одну
   DB-транзакцию/`AsyncSession`; SMTP выполняется outbox worker-ом после commit.
 
-- Модель `ApprovalModel` хранит статус (`draft/pending/answered/canceled`),
-  решение (`approve/reject`), причину (`discount/product_rule`) и источник
-  (`email` / `auto_related_deals` / `auto_rule`). См. [[Domain Model]].
-- Таблица `approval_stages` уже добавлена в модель и схемы как будущая основа
-  последовательного workflow: stage code, position, required permission, assignee,
-  stage token, skip/audit fields.
-- `OfferService._build_approval_create_data()` подключает offer-level route builder
-  и создаёт стадии как промежуточный результат Tickets 1–5. Переход к одному
-  approval сделки и перенос orchestration на deal-level выполняются в Ticket 6;
-  завершённые тикеты и применённые миграции задним числом не переписываются.
-- `DealService.request_approval()` запускает deal-level state machine. Активация сохраняет stage token и transactional outbox в той же транзакции; SMTP выполняется отдельным worker после commit.
+- Модель `ApprovalModel` хранит статус
+  (`draft/pending/blocked/answered/canceled/not_required`), решение (`approve/reject`),
+  версию процесса и предмет согласования, инициатора и источник
+  (`email` / `auto_related_deals` / `auto_rule`). Legacy scalar `reason_type`
+  (`discount/product_rule`) сохранён для совместимости, полный набор причин лежит в
+  `route_context`. См. [[Domain Model]].
+- `approval_stages` хранит стадию процесса: stage code, position, required permission,
+  optional-признак, assignee, сроки и поля skip/решения. Активная стадия в процессе
+  одна — это гарантирует partial unique index.
+- `DealService.request_approval()` запускает deal-level state machine и сохраняет
+  инициатора процесса в `approval.requested_by_user_id`: событие `started` создаётся
+  системой и actor не содержит. Инициатор берётся только из trusted principal middleware.
+  Активация сохраняет stage token и transactional outbox в той же транзакции; SMTP
+  выполняется отдельным worker после commit.
 - `DealService.receive_mail()` для `workflow_version >= 2` находит историю stage token по SHA-256 hash, проверяет stage/deal/sender и вызывает общие `ApprovalWorkflowService.approve/reject`. Legacy approval token остаётся только для workflow v1 до cleanup migration.
 - Delivery email хранится в nullable `lkm_users.email`; валидный `ad_login` используется только как legacy fallback. Token TTL по умолчанию 14 дней, SLA стадии — 3 дня с отдельными настройками по stage code.
 - Некорректный Fernet key отклоняется при загрузке settings; повреждённый outbox ciphertext отменяет только соответствующую delivery. Permanent ошибки входящего stage email помечаются seen, transient ошибки повторяются.
 - API задач согласующего фильтрует pending stages в SQL по trusted LKM principal. API decision повторно проверяет assignee/effective permission под lock и хранит persisted idempotency result в `approval_stage_decision_requests`.
-- TODO: добавить `offer.created_at` в будущие snapshot для полного ключа сортировки; до этого используется fallback по offer id. Audit events API/email остаются границей Ticket 9.
+- Skip и reassign вынесены в отдельные ручки с правами `skip_kp_approval_stage` /
+  `reassign_kp_approval_stage`: skip доступен только для optional stage, reassign — только
+  для единоличной, каждая команда принимает idempotency key и пишет audit event.
+- Каждый фактический переход пишет event в `approval_stage_events` в той же транзакции;
+  история упорядочена по `sequence` внутри approval.
+- Любое чтение под `SELECT ... FOR UPDATE` выполняется с `populate_existing=True`:
+  иначе identity map SQLAlchemy вернёт объекты, прочитанные до блокировки, и проигравшая
+  в гонке команда применит переход по устаревшему состоянию.
+- Переход на staged workflow выполняется cutover-ом Ticket 12: persisted maintenance flag
+  плюс advisory lock закрывают записи, команда `python -m app.cli.approval_cutover`
+  делает preflight, dry-run и идемпотентную миграцию. Порядок — [[Approval Cutover Runbook]].
+- После полного `answered/approve` `OfferImplementationService` создаёт по одному заказу
+  ОП на каждый offer одобренного snapshot; ключ идемпотентности — детерминированный
+  UUIDv5 от пары `(approval_id, offer_id)`, состояние хранится в `offer_implementations`.
+- В debug-режиме (`APP_DEBUG` + `APP_DEBUG_EMAIL_REDIRECT`) письма согласования уходят
+  инициатору процесса, а не реальным согласующим: адрес резолвится от
+  `approval.requested_by_user_id` в момент создания уведомления и кладётся в его payload,
+  потому что outbox отправляет письмо вне запроса. Если инициатор неизвестен или у него
+  нет email, доставка отменяется — реальный согласующий письма не получает.
+- TODO: добавить `offer.created_at` в будущие snapshot для полного ключа сортировки; до этого используется fallback по offer id.
 - Ответы согласующих приходят по email и разбираются IMAP-поллером
   (`approval_email_composer.py`, `email_contents.py`, `email_transport.py`).
 - **Доступность действий** над сделкой/оффером вычисляется паттерном resolver'ов:
@@ -186,3 +220,9 @@ app/
   публикация образа в `df-ors-registry.datafort.ru`.
 - **Качество**: pre-commit (`make check`) — black (line-length 120), isort, flake8,
   mypy, bandit; тесты — pytest (+asyncio, xdist, cov).
+- **Тесты**: unit-набор запускается без внешних зависимостей, интеграционные тесты
+  workflow согласования (`tests/integration/`) помечены маркером `integration`,
+  поднимают схему Alembic-миграциями на PostgreSQL и очищают её между тестами.
+  Без базы — `pytest -m "not integration"`. Набор делит одну тестовую БД, поэтому
+  запускается последовательно; CI прогоняет unit с `-n auto`, интеграционные — отдельным
+  шагом против сервиса `postgres`.

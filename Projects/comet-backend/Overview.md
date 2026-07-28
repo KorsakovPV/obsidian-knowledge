@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-27
+updated: 2026-07-28
 tags: [project, backend, fastapi, python]
 ---
 
@@ -50,6 +50,8 @@ python app/main.py            # uvicorn на localhost:8022
 - Swagger UI отдаётся на корне `/` (`docs_url='/'`).
 - Все ручки под префиксом `/api` (далее `/v1`), см. [[API]].
 - Проверки качества: `make check` (pre-commit: black, isort, flake8, mypy, bandit).
+- Тесты: `pytest`. Интеграционные тесты согласования требуют PostgreSQL и помечены
+  маркером `integration`; без базы — `pytest -m "not integration"`.
 
 ## Карта документации
 
@@ -67,6 +69,7 @@ python app/main.py            # uvicorn на localhost:8022
 - [[Sequential KP Approval Tickets]] — декомпозиция реализации последовательного согласования КП.
 - [[Offer Actions Rules]] — правила доступности действий над сделкой/оффером по состоянию согласования.
 - [[Preapproved Order Integration]] — интеграция с Order Processing после согласования оффера (DFDEV-1908).
+- [[Approval Cutover Runbook]] — операционный порядок перевода legacy approvals на stage workflow.
 
 ## Заметки на полях
 

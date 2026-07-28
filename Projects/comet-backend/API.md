@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-27
+updated: 2026-07-28
 tags: [project, api, rest, fastapi]
 ---
 
@@ -39,9 +39,14 @@ tags: [project, api, rest, fastapi]
 |-------|------|-----------|
 | GET | `/approval-stages/pending?limit=50&offset=0` | Доступные текущему LKM user pending-стадии |
 | POST | `/approval-stages/{stage_id}/decision` | Решение `approve/reject`; требует `Idempotency-Key` |
+| POST | `/approval-stages/{stage_id}/skip` | Пропустить необязательную стадию (`reason`), право `skip_kp_approval_stage` |
+| POST | `/approval-stages/{stage_id}/reassign` | Переназначить единоличную стадию (`user_id`, `reason`), право `reassign_kp_approval_stage` |
 
-Decision endpoint не принимает email token или user id. Доступ проверяется повторно
-в locked workflow-транзакции; результат idempotency key хранится в БД.
+Ручки не принимают email token или user id: actor берётся только из principal middleware.
+Доступ и статус стадии проверяются повторно в locked workflow-транзакции; результат
+команды по `Idempotency-Key` сохраняется в БД, повтор возвращает его без нового перехода.
+Skip доступен только для optional stage, reassign — только для единоличной (для групповой
+возвращается `reassign_not_supported_for_group_stage`).
 
 ## Deals (сделки) — `/deals`
 
@@ -53,8 +58,9 @@ Decision endpoint не принимает email token или user id. Досту
 | PATCH  | `/deals/{deal_id}` | Обновить сделку |
 | DELETE | `/deals/{deal_id}` | Удалить сделку |
 | POST   | `/deals/{deal_id}/start-implementation` | Запустить имплементацию сделки *(сейчас заглушка)* |
-| POST   | `/deals/{deal_id}/approval/request` | Отправить сделку на согласование |
+| POST   | `/deals/{deal_id}/approval/request` | Отправить сделку на согласование (инициатор сохраняется в согласовании) |
 | POST   | `/deals/{deal_id}/approval/revoke` | Отозвать согласование |
+| GET    | `/deals/{deal_id}/approvals?limit=20&offset=0` | История версий согласования сделки (без token-полей) |
 | POST   | `/deals/check_send_email` | ⚙️ Техническая: тест отправки письма |
 | POST   | `/deals/check_fetch_unseen_emails` | ⚙️ Техническая: тест чтения писем |
 
@@ -174,6 +180,8 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 | `POST /offers`, edit/delete оффера | `create_kp` |
 | `GET /offers`, `GET /offers/{id}` | `view_kp` |
 | внутренние/справочные ручки сделок | `require_admin` |
+| `POST /approval-stages/{id}/skip` | `skip_kp_approval_stage` |
+| `POST /approval-stages/{id}/reassign` | `reassign_kp_approval_stage` |
 
 ---
 

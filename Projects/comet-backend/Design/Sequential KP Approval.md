@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-27
+updated: 2026-07-28
 source: docs/lkm_role_model.md
 tags: [project, design, approval, lkm, rbac]
 ---
@@ -231,6 +231,29 @@ stage, создаются одна логическая `approval_stage_notifica
 worker после commit отправляет deliveries с retry/backoff и
 `FOR UPDATE SKIP LOCKED`. Для group permission stage/token/message общие, recipients
 и статусы доставки раздельные.
+
+### Инициатор процесса и debug-переадресация писем
+
+Кто отправил сделку на согласование, отдельно не сохранялось: событие `started`
+создаётся системой и actor не содержит. `approval.requested_by_user_id` (nullable FK на
+`lkm_users`) закрывает этот пробел аудита — значение берётся из trusted principal ручки
+`POST /deals/{id}/approval/request` и пишется в `ApprovalWorkflowService.start`. У версий
+из cutover и авто-пересборки маршрута инициатора нет, поэтому колонка nullable.
+
+На тестовых стендах письма не должны уходить реальным согласующим. При `APP_DEBUG` и
+`APP_DEBUG_EMAIL_REDIRECT` получатель подменяется на инициатора процесса. Ключевые решения:
+
+- адрес резолвится **от согласования**, а не от актора текущей операции: уведомление
+  следующей стадии создаётся в транзакции решения согласующего, иначе письма цепочки
+  уходили бы каждому, кто закрыл предыдущую стадию;
+- адрес фиксируется в `payload_snapshot` уведомления в момент его создания, потому что
+  outbox отправляет письмо уже вне запроса и контекста пользователя не имеет;
+- реальные получатели остаются в delivery-строках: аудит доставки и уникальность
+  `(notification_id, canonical_recipient_email)` не меняются, в теме письма проставляется
+  `[debug → <реальный адресат>]`;
+- если инициатор неизвестен или у него не заполнен `lkm_users.email`, получателя нет и
+  доставка отменяется (`DebugRedirectRecipientUnknown`) — реальному согласующему письмо
+  не уходит.
 
 ## State machine
 
