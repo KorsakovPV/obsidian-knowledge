@@ -1,20 +1,31 @@
 ---
 project: comet-backend
 created: 2026-07-28
+updated: 2026-08-04
 source: docs/approval_cutover_runbook.md
-tags: [project, research, approval, runbook, migration]
+status: historical
+tags: [project, research, approval, runbook, migration, historical]
 ---
 
 # Approval Cutover Runbook
 
-#research #approval #runbook
+#research #approval #runbook #historical
 
-Операционный порядок cutover согласований на stage workflow (Ticket 12).
-Связано: [[Sequential KP Approval]], [[Sequential KP Approval Tickets]], [[Architecture]].
+Связано: [[Sequential KP Approval]], [[Sequential KP Approval Tickets]], [[Architecture]],
+[[Domain Model]].
 
-Документ описывает операционный порядок перевода legacy approvals на deal-level
-staged workflow. Все команды выполняются внутри пода приложения: директория
-`scripts/` в образ не попадает, поэтому команда живёт в `app/cli`.
+
+> **Статус: архивный документ.** Cutover выполнен, прод работает на staged workflow.
+> Ticket 15 удалил и инструменты, и схему, которые здесь описаны: команды
+> `python -m app.cli.approval_cutover ...`, таблицы `approval_maintenance_state` и
+> `approval_cutover_deals`, флаг `APP_APPROVAL_WORKFLOW_V2_ENABLED` и legacy-колонки
+> `approval` больше не существуют (миграция `c9d0e1f2a3b5`). Ни одну команду из этого
+> документа выполнить нельзя — он сохранён только как запись о том, как переводили
+> данные, и как источник SQL-проверок для разбора старых сделок.
+
+Документ описывал операционный порядок перевода legacy approvals на deal-level
+staged workflow. Все команды выполнялись внутри пода приложения: директория
+`scripts/` в образ не попадает, поэтому команда жила в `app/cli`.
 
 ## Модель развёртывания
 
@@ -156,7 +167,7 @@ SELECT state, count(*) FROM approval_cutover_deals GROUP BY state;
 После включения v2 approval-level `email_token` больше не принимается: такие
 письма помечаются прочитанными и логируются как legacy.
 
-## Rollback
+## Rollback (актуально было на момент cutover)
 
 - **До включения v2 write traffic** (флаг выключен, миграция данных не
   запускалась) — обычный откат релиза на offer-level версию.
@@ -170,9 +181,15 @@ SELECT state, count(*) FROM approval_cutover_deals GROUP BY state;
 Аварийная остановка без отката релиза: `maintenance-on` — записи закрываются, а
 уже принятые решения сохраняются.
 
-## Известные ограничения
+## Что изменилось после Ticket 15
 
-- `approval.approvers` и approval-level `email_token` остаются в схеме до
-  Ticket 15; новый workflow их не создаёт и не читает.
-- Отсутствие current staged версии не означает `not_required`: deal-level сводка
-  показывает последнюю завершённую legacy версию с признаком `is_legacy`.
+- Флага `approval_workflow_v2_enabled` больше нет: staged workflow — единственный
+  процесс, откат на offer-level версию невозможен ни при каком значении настроек.
+- `approval.offer_id`, `approval.approvers`, approval-level `email_token` и
+  `email_token_expires_at`, а также `approval_stages.email_token` удалены из схемы
+  миграцией `c9d0e1f2a3b5`.
+- Сводка сделки строится только по current версии. Legacy-строки остались в таблице
+  `approval` и видны в истории (`GET /deals/{deal_id}/approvals`), но сделку больше
+  не представляют: сделка без current версии считается `not_required`.
+- Инструменты cutover (`app/cli/approval_cutover`, `ApprovalCutoverService`,
+  `ApprovalMaintenanceService`) и обе служебные таблицы удалены.

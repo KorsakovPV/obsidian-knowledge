@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-28
+updated: 2026-08-04
 source: docs/lkm_role_model.md
 tags: [project, tickets, approval, lkm, rbac]
 ---
@@ -856,6 +856,11 @@ DoD:
 - после включения v2 approval-level `email_token` больше не принимается; физическое
   удаление legacy-колонок остаётся за Ticket 15.
 
+Статус на 2026-08-04: **выполнено и свёрнуто.** Cutover проведён, инструментарий
+удалён вместе с legacy-контрактом (см. статус Ticket 15). Ни CLI, ни таблиц
+`approval_cutover_deals` / `approval_maintenance_state` в коде больше нет; runbook
+[[Approval Cutover Runbook]] оставлен как историческая запись.
+
 ## Ticket 13 — Адаптировать создание заказов в ОП к deal-level approval
 
 Цель: после единого решения по сделке создать отдельный заказ для каждого
@@ -1043,6 +1048,17 @@ DoD:
 - Legacy bearer token/approvers не читаются и не возвращаются API.
 - История решений сохранена, migrations применяются/откатываются в допустимой
   contract-границе.
+
+Статус на 2026-08-04: **сделано**, кроме `reason_type`. Миграция
+`2026_08_06_..._drop_legacy_approval_contract.py` сняла `approval.offer_id`,
+`approval.approvers`, approval-level `email_token`/`email_token_expires_at` и
+`approval_stages.email_token`/`email_token_expires_at`; той же миграцией удалены
+таблицы cutover (`approval_cutover_deals`, `approval_maintenance_state`) и из кода
+ушли CLI `app.cli.approval_cutover`, `approval_cutover.py`, `approval_maintenance.py`.
+`OfferModel.approval` и `ApprovalCrud.get_by_offer_id` удалены, feature-flag
+`APP_APPROVAL_WORKFLOW_V2_ENABLED` из конфигурации убран (outbox worker стартует
+безусловно). Скалярный `reason_type` на `ApprovalModel` **остался** — полный набор
+причин по-прежнему в `route_context`, колонка не удалена.
 
 ## Ticket 16 — Считать скидку тарифа от прайса классификатора
 

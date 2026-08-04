@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-28
+updated: 2026-08-04
 tags: [project, api, rest, fastapi]
 ---
 
@@ -52,17 +52,31 @@ Skip доступен только для optional stage, reassign — толь�
 
 | Метод | Путь | Назначение |
 |-------|------|-----------|
-| POST   | `/deals` | Создать сделку |
+| POST   | `/deals` | Создать сделку (необязательный `contract_id`, см. ниже) |
 | GET    | `/deals` | Список сделок (с фильтрами `DealFilters`) |
 | GET    | `/deals/{deal_id}` | Получить сделку |
-| PATCH  | `/deals/{deal_id}` | Обновить сделку |
+| PATCH  | `/deals/{deal_id}` | Обновить сделку (`contract_id` не принимается → 422) |
 | DELETE | `/deals/{deal_id}` | Удалить сделку |
-| POST   | `/deals/{deal_id}/start-implementation` | Запустить имплементацию сделки *(сейчас заглушка)* |
+| POST   | `/deals/{deal_id}/start-implementation` | Создать заказы в ОП по офферам сделки (`change_deal_status`) |
 | POST   | `/deals/{deal_id}/approval/request` | Отправить сделку на согласование (инициатор сохраняется в согласовании) |
 | POST   | `/deals/{deal_id}/approval/revoke` | Отозвать согласование |
 | GET    | `/deals/{deal_id}/approvals?limit=20&offset=0` | История версий согласования сделки (без token-полей) |
 | POST   | `/deals/check_send_email` | ⚙️ Техническая: тест отправки письма |
 | POST   | `/deals/check_fetch_unseen_emails` | ⚙️ Техническая: тест чтения писем |
+
+`start-implementation` доступна только для сделки с пройденным маршрутом согласования
+(одобренной либо не требующей согласования). Для одобренной заказы создаются по
+одобренному снимку, по одному на оффер, с идемпотентным ключом; если часть заказов не
+создана — 409, сделка не считается переданной.
+
+### Договор сделки
+
+`contract_id` принимается при создании и после создания не меняется. Договор
+пришёл — сделка коммерческая; не пришёл — тестовая, бэк сам подставляет тестовый
+(`TST*`) договор клиента. Сделка отдаёт вычисляемый тип договора:
+`contract_number`, `contract_type` (`test` / `inner` / `commercial`),
+`contract_type_title` — и в карточке, и в списке. Подробно —
+[[Deal Contract Selection]] и [[DFDEV-2257 Deal Contract Selection]].
 
 ## Вложения сделок — `/deals/{deal_id}/attachments`
 
@@ -139,15 +153,20 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 
 Собирает три под-роутера:
 
-- `/customers/client` — клиенты (GET-поиск/получение, POST).
-- `/customers/contracts` — договоры (GET/POST/PUT/DELETE).
+- `/customers/client` — клиенты: GET список / `search` / `detailed`, получение по
+  `{client_id}`, `by-inn/{inn}`, `by-external-id/{external_id}`, POST создание.
+- `/customers/contracts` — договоры (GET/POST/PUT/DELETE). В выдаче есть
+  вычисляемый тип договора (`contract_type`, `contract_type_title`). Для выбора
+  договора при создании сделки: `?child_client_id=<клиент>&seller=<продавец>` —
+  `seller` разворачивается в `parent_client_id` продавца, удалённые договоры по
+  умолчанию не отдаются. См. [[Deal Contract Selection]].
 - `/customers/staffers` — сотрудники (GET/POST/PUT/PATCH/DELETE).
 
 ## Bitrix24 — `/bitrix`
 
 | Метод | Путь | Назначение |
 |-------|------|-----------|
-| GET | `/bitrix/deal/...` | Получение данных сделки из Bitrix24 |
+| GET | `/bitrix/deal/deals_and_company_by_inn/{inn}` | Сделки и компания из Bitrix24 по ИНН |
 
 ## ЛКМ: управление пользователями — `/lkm/users`
 
@@ -161,6 +180,7 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 | POST  | `/lkm/users` | Добавить пользователя из AD в ЛКМ | `add_users` |
 | GET   | `/lkm/users/{user_id}` | Карточка пользователя + эффективные пермиссии | любой из `add_users` / `change_user_roles` / `change_permissions` |
 | PATCH | `/lkm/users/{user_id}/role` | Сменить роль (не свою УЗ; сбрасывает персональные права) | `change_user_roles` |
+| PATCH | `/lkm/users/{user_id}/email` | Задать канонический email доставки писем согласования (или очистить через `null`) | `add_users` |
 | PATCH | `/lkm/users/{user_id}/permissions` | Заменить персональные пермиссии: `permission_codenames` — на все продукты, `scoped_permissions` (`codename` + `product_id`) — на конкретный продукт | `change_permissions` |
 
 ## ЛКМ: справочники — `/lkm/roles`, `/lkm/permissions`
@@ -168,7 +188,7 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 | Метод | Путь | Назначение | Право |
 |-------|------|-----------|-------|
 | GET | `/lkm/roles` | Справочник ролей (8 ролей) с дефолтными наборами прав | `require_admin` (роль `admin`, временный gap) |
-| GET | `/lkm/permissions` | Справочник пермиссий (22 шт.) | `require_admin` (роль `admin`, временный gap) |
+| GET | `/lkm/permissions` | Справочник пермиссий (24 шт.: 22 из БТ02 + `skip_kp_approval_stage`, `reassign_kp_approval_stage`) | `require_admin` (роль `admin`, временный gap) |
 
 Справочники кэшируются (данные статичны после seeding).
 
@@ -192,7 +212,6 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 ---
 
 ⚙️ — временные/технические ручки, не часть стабильного контракта (видно по коду:
-docstring «Временная техническая ручка» / `start-implementation` — заглушка до
-реализации бизнес-логики).
+docstring «Временная техническая ручка»). Обе закрыты `require_admin`.
 
 Доменные сущности, фигурирующие в запросах/ответах, описаны в [[Domain Model]].

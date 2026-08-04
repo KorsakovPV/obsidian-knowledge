@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-28
+updated: 2026-08-04
 source: docs/lkm_role_model.md
 tags: [project, design, approval, lkm, rbac]
 ---
@@ -10,7 +10,15 @@ tags: [project, design, approval, lkm, rbac]
 
 #project #design #approval #lkm #rbac
 
-Связано: [[LKM Role Model]], [[BT02 Role Model Gaps]], [[Sequential KP Approval Tickets]].
+Связано: [[LKM Role Model]], [[BT02 Role Model Gaps]], [[Sequential KP Approval Tickets]],
+[[Approval Debug Mode]].
+
+> [!note] Это документ проектирования, а не описание текущей схемы
+> Раздел «Контекст» и черновики DDL ниже фиксируют состояние на момент проектирования
+> (июль 2026): nullable `approval.offer_id`, `email_token` на approval и на стадии,
+> два конкурирующих workflow. Всё это уже снято — актуальную схему смотри в
+> [[Domain Model]], реализованное поведение — в [[Architecture]]. Проверено по коду
+> 2026-08-04.
 
 ## Контекст
 

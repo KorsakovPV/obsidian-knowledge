@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-28
+updated: 2026-08-04
 tags: [project, backend, fastapi, python]
 ---
 
@@ -69,14 +69,22 @@ python app/main.py            # uvicorn на localhost:8022
 - [[Sequential KP Approval Tickets]] — декомпозиция реализации последовательного согласования КП.
 - [[DFDEV-2052 Deal and Offer Status Contract]] — нарезка контракта фронта на тикеты:
   статус и этапы сделки, КП-статус офера, структурный статус БЗ из ITSM, история сделки.
+- [[Deal Contract Selection]] — договор сделки: приём `contract_id` при создании, тестовая
+  ветка TST, вычисляемый тип договора, список договоров для выбора.
 - [[DFDEV-2257 Deal Contract Selection]] — выбор договора при создании сделки, вычисляемый
   тип договора (тестовый/внутренний/коммерческий), неизменяемость договора после создания.
 - [[Offer Actions Rules]] — правила доступности действий над сделкой/оффером по состоянию согласования.
 - [[Preapproved Order Integration]] — интеграция с Order Processing после согласования оффера (DFDEV-1908).
-- [[Approval Cutover Runbook]] — операционный порядок перевода legacy approvals на stage workflow.
+- [[Approval Debug Mode]] — отладка маршрута согласования на стенде:
+  `APP_DEBUG_EMAIL_REDIRECT`, переадресация писем инициатору и послабление авторизации.
+- [[Approval Cutover Runbook]] — ⚠️ историческая: перевод legacy approvals на stage
+  workflow; сам инструментарий из кода удалён.
 
 ## Заметки на полях
 
 - Часть ручек — временные/технические (`/deals/check_send_email`,
-  `/deals/check_fetch_unseen_emails`, `start-implementation` как заглушка).
-  Это видно по коду и помечено в [[API]].
+  `/deals/check_fetch_unseen_emails`), они закрыты `require_admin`.
+  Это видно по коду и помечено в [[API]]. `start-implementation` заглушкой быть
+  перестала: она создаёт заказы в ОП по офферам сделки.
+- Legacy offer-level согласование снято целиком (Ticket 15): у `approval` больше нет
+  `offer_id`, `approvers` и email-токенов, служебные таблицы cutover удалены.

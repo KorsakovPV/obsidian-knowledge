@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-07-23
+updated: 2026-08-04
 source: docs/lkm_role_model.md
 source_pdf: Attachments/БТ02_ Ролевая модель - Datafort DEV - Confluence.pdf
 tags: [project, tickets, lkm, permissions, rbac]
@@ -16,6 +16,12 @@ tags: [project, tickets, lkm, permissions, rbac]
 Проверка выполнена по PDF БТ02 от 15.07.2026 и текущему коду `comet-backend` на 2026-07-23.
 Код уже содержит базу БТ02: 8 ролей, 22 permissions и миграцию пересборки матрицы
 ролей. Ниже — оставшиеся расхождения, которые нужно закрыть отдельными задачами.
+
+Сверка с кодом на 2026-08-04: открыты тикеты 1–5, 7, 8; тикет 6 закрыт (см. его
+статус). В коде теперь 24 permissions — к 22 из БТ02 добавились
+`skip_kp_approval_stage` и `reassign_kp_approval_stage`, а миграция
+`..._narrow_approval_roles.py` сузила наборы прав ролей до «одна стадия — одна роль».
+Зона ответственности (`lkm_user_permissions.scope_product_id`) реализована.
 
 ## Ticket 1 — Перевести справочники ролей/permissions с `require_admin` на permission guards
 
@@ -105,6 +111,12 @@ DoD:
 - Протащить `request.state.lkm_permissions` в сборку actions для deal/offer responses.
 - Сохранить старое поведение только там, где request context действительно отсутствует.
 - Добавить тесты, что action скрывается/запрещается без нужной permission в API-ответе.
+
+Статус на 2026-08-04: **закрыт.** `permissions` прокидываются в сборку ответов для
+обеих сущностей: `DealService._build_deal_schema` → `DealActionContext.from_deal(deal,
+permissions=permissions)`, `OfferService.transform_db_offer(..., permissions=...)`.
+Серверная проверка дублируется в `DealService.ensure_action_allowed`, чтобы
+router-level availability не подменяла guard.
 
 ## Ticket 7 — Решить расхождение целевого дизайна `roles as data` и текущего `UserRole` enum
 

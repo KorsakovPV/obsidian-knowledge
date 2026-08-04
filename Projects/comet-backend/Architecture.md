@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-28
+updated: 2026-08-04
 tags: [project, architecture, fastapi]
 ---
 
@@ -64,9 +64,11 @@ app/
   TTL stage token (14 дней), SLA по stage code (3 дня), размер пачки и backoff worker-а.
   Некорректный ключ отклоняется при загрузке настроек, `ensure_ready()` не даёт
   запустить v2 без него.
-- Флаги: `APP_APPROVAL_WORKFLOW_V2_ENABLED` — включение staged workflow;
-  `APP_DEBUG_EMAIL_REDIRECT` — переадресация писем согласования в debug-режиме;
+- Флаги: `APP_DEBUG_EMAIL_REDIRECT` — переадресация писем согласования и послабление
+  авторизации решений на тестовом контуре (см. [[Approval Debug Mode]]);
   `ORDER_PROCESSING_SEND_EXTERNAL_CONTEXT` — трассировка approval/offer в payload ОП.
+  Флага `APP_APPROVAL_WORKFLOW_V2_ENABLED` больше нет: staged workflow —
+  единственный, включать его нечем.
 - Таймзона по умолчанию — `Europe/Moscow`.
 
 ## Аутентификация
@@ -103,13 +105,22 @@ app/
 - **Зона ответственности**: персональное назначение может быть ограничено продуктом
   (`lkm_user_permissions.scope_product_id`). Это влияет на выбор согласующих: групповая
   стадия уходит holders без scope и holders нужных продуктов.
-- **Каталог**: `Permission(StrEnum)` (22 пермиссии) и `UserRole(StrEnum)`
+- **Каталог**: `Permission(StrEnum)` (24 пермиссии: 22 из БТ02 плюс
+  `skip_kp_approval_stage` и `reassign_kp_approval_stage`) и `UserRole(StrEnum)`
   (`app/models/lkm_permission.py`, `app/models/lkm_user.py`). Пермиссии и роли, их
   наборы (`lkm_role_permissions`) и связки сейчас **засеваются миграцией**
   (`migrations/versions/..._add_lkm_permissions.py`).
 - **Действия сделок/офферов**: доступность конкретных действий (edit/delete/…)
   дополнительно вычисляется resolver'ами `deal_actions` / `offer_actions` с учётом
   состояния согласования — см. раздел «Согласование» и [[Offer Actions Rules]].
+
+Наборы прав ролей сужены миграцией `2026_08_05_..._narrow_approval_roles.py`:
+постадийная `approve_kp_*` остаётся ровно у своей роли (`approve_kp_presale` →
+`presale`, `approve_kp_lead` → `sales_lead`, `approve_kp_product_owner` →
+`product_owner`). До этого `approve_kp_presale` входила в наборы пяти ролей, и письмо
+групповой стадии уходило десятку адресатов. Единоличные `approve_kp_sales_director`,
+`approve_kp_finance_director`, `approve_kp_lawyer` в наборы ролей не входят вовсе —
+только персональные назначения.
 
 > [!note] Код vs. БТ02
 > Реализация уже содержит 8 ролей и 22 пермиссии БТ02, а сид БТ02 применён через
@@ -124,11 +135,11 @@ app/
   (`main.py`): раз в 2 минуты `DealService.receive_mail()` забирает письма-ответы
   согласования из IMAP-ящика. Ошибки логируются, цикл не падает; завершается через
   `CancelledError` при остановке приложения.
-- Там же при включённом `approval_workflow_v2_enabled` стартует `poll_approval_outbox()`:
+- Там же безусловно стартует `poll_approval_outbox()`:
   `ApprovalNotificationWorker.process_pending()` разбирает transactional outbox
   (`FOR UPDATE SKIP LOCKED`, retry с экспоненциальным backoff) и отправляет SMTP уже
-  после commit workflow-транзакции. Во время cutover worker останавливается по
-  maintenance flag.
+  после commit workflow-транзакции. Пауза между итерациями — 1 с, если что-то
+  обработано, иначе 10 с.
 
 ## Согласование (approvals) и «действия»
 
@@ -173,7 +184,7 @@ app/
   системой и actor не содержит. Инициатор берётся только из trusted principal middleware.
   Активация сохраняет stage token и transactional outbox в той же транзакции; SMTP
   выполняется отдельным worker после commit.
-- `DealService.receive_mail()` для `workflow_version >= 2` находит историю stage token по SHA-256 hash, проверяет stage/deal/sender и вызывает общие `ApprovalWorkflowService.approve/reject`. Legacy approval token остаётся только для workflow v1 до cleanup migration.
+- `DealService.receive_mail()` для `workflow_version >= 2` находит историю stage token по SHA-256 hash, проверяет stage/deal/sender и вызывает общие `ApprovalWorkflowService.approve/reject`. Письмо без `stage_id` — ответ на legacy-рассылку: оно только помечается прочитанным (approval-level token удалён из схемы).
 - Delivery email хранится в nullable `lkm_users.email`; валидный `ad_login` используется только как legacy fallback. Token TTL по умолчанию 14 дней, SLA стадии — 3 дня с отдельными настройками по stage code.
 - Некорректный Fernet key отклоняется при загрузке settings; повреждённый outbox ciphertext отменяет только соответствующую delivery. Permanent ошибки входящего stage email помечаются seen, transient ошибки повторяются.
 - API задач согласующего фильтрует pending stages в SQL по trusted LKM principal. API decision повторно проверяет assignee/effective permission под lock и хранит persisted idempotency result в `approval_stage_decision_requests`.
@@ -185,17 +196,27 @@ app/
 - Любое чтение под `SELECT ... FOR UPDATE` выполняется с `populate_existing=True`:
   иначе identity map SQLAlchemy вернёт объекты, прочитанные до блокировки, и проигравшая
   в гонке команда применит переход по устаревшему состоянию.
-- Переход на staged workflow выполняется cutover-ом Ticket 12: persisted maintenance flag
-  плюс advisory lock закрывают записи, команда `python -m app.cli.approval_cutover`
-  делает preflight, dry-run и идемпотентную миграцию. Порядок — [[Approval Cutover Runbook]].
+- Переход на staged workflow (cutover Ticket 12) **завершён**, а инструментарий удалён
+  миграцией `2026_08_06_..._drop_legacy_approval_contract.py`: нет ни CLI
+  `app.cli.approval_cutover`, ни `approval_cutover.py` / `approval_maintenance.py`,
+  ни таблиц `approval_cutover_deals` и `approval_maintenance_state`. Исторический
+  порядок операций сохранён в [[Approval Cutover Runbook]].
+- Той же миграцией снят весь legacy-контракт offer-level workflow: `approval.offer_id`,
+  `approval.approvers`, approval-level `email_token`/`email_token_expires_at` и
+  `approval_stages.email_token`/`email_token_expires_at`. Строки старых согласований
+  остались — история сделки читается через `GET /deals/{deal_id}/approvals`.
 - После полного `answered/approve` `OfferImplementationService` создаёт по одному заказу
   ОП на каждый offer одобренного snapshot; ключ идемпотентности — детерминированный
   UUIDv5 от пары `(approval_id, offer_id)`, состояние хранится в `offer_implementations`.
-- В debug-режиме (`APP_DEBUG` + `APP_DEBUG_EMAIL_REDIRECT`) письма согласования уходят
-  инициатору процесса, а не реальным согласующим: адрес резолвится от
-  `approval.requested_by_user_id` в момент создания уведомления и кладётся в его payload,
-  потому что outbox отправляет письмо вне запроса. Если инициатор неизвестен или у него
-  нет email, доставка отменяется — реальный согласующий письма не получает.
+- В debug-режиме письма согласования уходят инициатору процесса, а не реальным
+  согласующим: адрес резолвится от `approval.requested_by_user_id` в момент создания
+  уведомления и кладётся в его payload, потому что outbox отправляет письмо вне
+  запроса. Если инициатор неизвестен или у него нет email, доставка отменяется —
+  реальный согласующий письма не получает. Вместе с переадресацией снимается проверка
+  прав на решение: инициатор может закрыть любую стадию своего согласования
+  (`approval_debug_access.py`), иначе маршрут не пройти. Токен, статус стадии,
+  актуальность снапшота и идемпотентность проверяются всегда, каждое такое решение
+  пишется в лог warning-ом. Детали и порядок использования — [[Approval Debug Mode]].
 - TODO: добавить `offer.created_at` в будущие snapshot для полного ключа сортировки; до этого используется fallback по offer id.
 - Ответы согласующих приходят по email и разбираются IMAP-поллером
   (`approval_email_composer.py`, `email_contents.py`, `email_transport.py`).
@@ -211,7 +232,7 @@ app/
 | Сервис | Назначение |
 |--------|-----------|
 | `classifier.py` (`ClassifierService`) | Классификатор продуктов/услуг |
-| `customers/` (`CustomersClientService`, `CustomersContractsService`, `CustomersStaffersService`) | Клиенты, договоры, сотрудники |
+| `customers/` (`CustomersClientService`, `CustomersContractsService`, `CustomersStaffersService`) | Клиенты, договоры, сотрудники. Договор сделки выбирается при её создании, тип договора считается по номеру — [[Deal Contract Selection]] |
 | `order_processing.py` (`OrderProcessing`) | Создание заказов в ОП по офферам |
 | `bitrix24.py` | Интеграция с Bitrix24 (сделки) |
 | `keycloak.py` / `auth.py` | Аутентификация и токены |

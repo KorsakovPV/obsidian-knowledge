@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-07-28
+updated: 2026-08-04
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -22,7 +22,6 @@ Deal 1───* Approval (версии; ровно одна is_current)
   │            ├──* ApprovalStageEvent   (ordered audit по sequence)
   │            └──* OfferImplementation  (по одному на offer одобренного snapshot)
   ├──* Offer 1───0..1 OfferOrder  (заказ в ОП)
-  │        └───0..1 Approval      (legacy offer-level связь, удаляется в Ticket 15)
   └──* DealAttachment
 
 PreTariff 1───* PreTariffComment
@@ -30,14 +29,21 @@ PreTariff 1───* PreTariffComment
 
 ClientPrice            (цены клиента)
 LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
-ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблицы cutover)
 ```
+
+Согласование живёт только на уровне сделки: offer-level связь `Offer 0..1 Approval` и
+служебные таблицы cutover удалены миграцией
+`2026_08_06_..._drop_legacy_approval_contract.py`.
 
 ## Deal — `deal`
 
 Коммерческое предложение (сделка).
 
 - `client_id`, `contract_id?`, `region_id` — UUID заказчика / договора / региона.
+  `contract_id` проставляется при создании сделки и после этого не меняется:
+  передан фронтом — сделка коммерческая, не передан — подставляется тестовый
+  (`TST*`) договор клиента. Тип договора **не хранится**, он вычисляется по номеру
+  договора из customers (см. [[Deal Contract Selection]]).
 - `title`, `description?`.
 - `seller` — организатор продаж, enum `Seller`: `datafort` | `vimpelcom`.
 - `staffers_contractor`, `staffers_customer`, `staffers_partner_customer` —
@@ -56,8 +62,8 @@ ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблиц
   `group_code` и рассчитанные сервером `base_price`, `base_price_source`,
   `discount_percent` — по ним route builder выбирает скидочный маршрут.
 - `created_by`, `updated_by?`.
-- Связи: `deal`, `order` (0..1, `OfferOrder`); `approval` (0..1) — legacy offer-level
-  связь, помеченная TODO Ticket 15.
+- Связи: `deal`, `order` (0..1, `OfferOrder`). Offer-level связи с `approval` больше
+  нет — согласование принадлежит сделке.
 - `special_conditions?` — nullable особые условия КП; передаются без преобразований
   в создаваемый заказ ОП.
 
@@ -65,7 +71,7 @@ ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблиц
 
 Процесс согласования сделки: владелец — `deal_id`, все офферы рассматриваются вместе.
 
-- `deal_id` → `deal`; `offer_id?` → `offer` — legacy-связь, у staged-версий `NULL`.
+- `deal_id` → `deal`.
 - Версии: `version`, `is_current`, `superseded_at`, `workflow_version`
   (`1` — legacy, `2` — staged). Ограничения: `UNIQUE(deal_id, version)` и partial
   unique index по `deal_id WHERE is_current` — у сделки не больше одной текущей версии.
@@ -81,8 +87,9 @@ ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблиц
 - `reason_type` (`ApprovalReasonType`): `discount` | `product_rule` — legacy scalar-причина;
   полный набор причин лежит в `route_context`.
 - `source` (`ApprovalSource`): `email` | `auto_related_deals` | `auto_rule`.
-- Legacy-поля до Ticket 15: `approvers` (JSON-список), `email_token?`,
-  `email_token_expires_at?`.
+- Legacy-полей offer-level workflow (`offer_id`, `approvers`, `email_token`,
+  `email_token_expires_at`) больше нет — сняты contract-фазой Ticket 15. Строки старых
+  согласований остались и читаются через `GET /deals/{deal_id}/approvals`.
 - Связи: `stages` (сортировка по `position`), `events` (сортировка по `sequence`).
 - Маршрут строится по максимальной скидке среди всех offers сделки; особые условия
   любого offer добавляют обязательную цепочку `product_owner → lawyer`.
@@ -109,10 +116,10 @@ ApprovalMaintenanceState / ApprovalCutoverDeal  (служебные таблиц
   `required_permission`.
 - `requested_at?`, `due_at?` (SLA стадии), `decided_at?`, `decision?`, `decision_comment?`.
 - `skipped_by_user_id?` → `lkm_users`, `skipped_at?`, `skip_reason?`.
-- Legacy до Ticket 15: `email_token?`, `email_token_expires_at?`.
-- Ограничения: уникальны `(approval_id, position)`, `(approval_id, stage_code)` и
-  `email_token`; partial unique index по `approval_id WHERE status = 'pending'` не
-  допускает две активные стадии в одном процессе.
+- Собственных token-полей у стадии нет: токен живёт в `approval_stage_tokens`.
+- Ограничения: уникальны `(approval_id, position)` и `(approval_id, stage_code)`;
+  partial unique index по `approval_id WHERE status = 'pending'` не допускает две
+  активные стадии в одном процессе.
 
 ## ApprovalStageToken — `approval_stage_tokens`
 
@@ -159,15 +166,6 @@ stage несколько delivery rows относятся к одной notifica
   `order_id?`, `order_number?`, `order_status?`, `succeeded_at?`.
 - Ограничения: уникальны `(approval_id, offer_id)` и `external_approval_id`.
 
-## Служебные таблицы cutover — `approval_maintenance_state`, `approval_cutover_deals`
-
-- `approval_maintenance_state`: persisted maintenance flag (`key`, `is_active`, `reason?`,
-  `activated_at?`, `activated_by?`), проверяется внутри write-транзакций вместе с
-  advisory lock.
-- `approval_cutover_deals`: журнал миграции по сделке (`deal_id`, `state`, `reason?`,
-  `legacy_approval_ids`, `target_approval_id?`, `subject_hash?`, `report`, `migrated_at?`),
-  делает повторный запуск идемпотентным. Порядок операций — [[Approval Cutover Runbook]].
-
 ## OfferOrder — `offer_order`
 
 Связь оффера с заказом во внешней системе ОП (Order Processing).
@@ -203,13 +201,17 @@ stage несколько delivery rows относятся к одной notifica
 - `lkm_users`: `ad_login`, `email?` (канонический delivery email писем согласования),
   `full_name`, `role` (`UserRole`:
   `manager` | `presale` | `sales_lead` | `sales_director` | `finance_director` | `product_owner` | `lawyer` | `admin`), `first_login_at?`, `created_by_admin?`.
-- `lkm_permissions` (`codename`, `name`, 22 записи), `lkm_roles` (`codename`, `name`).
+- `lkm_permissions` (`codename`, `name`, 24 записи: 22 из БТ02 плюс
+  `skip_kp_approval_stage` и `reassign_kp_approval_stage`), `lkm_roles`
+  (`codename`, `name`).
 - Связки: `lkm_role_permissions` (набор прав роли), `lkm_user_permissions` (персональные права).
 - `lkm_user_permissions.scope_product_id` — зона ответственности назначения: `NULL` даёт
   право на все продукты, заполненный ограничивает его одним продуктом. Уникальность
   задана двумя частичными индексами: обычный ключ с nullable-колонкой не запретил бы два
   глобальных назначения, потому что NULL в Postgres не сравнивается сам с собой.
-- Пермиссии/роли и наборы засеваются миграциями `..._add_lkm_permissions.py` и `..._bt02_roles_permissions.py`.
+- Пермиссии/роли и наборы засеваются миграциями `..._add_lkm_permissions.py` и
+  `..._bt02_roles_permissions.py`; `..._narrow_approval_roles.py` сузила наборы так, что
+  постадийная `approve_kp_*` остаётся ровно у своей роли.
 - Эффективные права = пермиссии роли ∪ персональные права. Полная спецификация —
   в исследовании [[LKM Role Model]]; проверка прав — в [[Architecture]].
 
