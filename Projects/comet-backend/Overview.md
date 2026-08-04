@@ -69,6 +69,8 @@ python app/main.py            # uvicorn на localhost:8022
 - [[Sequential KP Approval Tickets]] — декомпозиция реализации последовательного согласования КП.
 - [[DFDEV-2052 Deal and Offer Status Contract]] — нарезка контракта фронта на тикеты:
   статус и этапы сделки, КП-статус офера, структурный статус БЗ из ITSM, история сделки.
+- [[DFDEV-2257 Deal Contract Selection]] — выбор договора при создании сделки, вычисляемый
+  тип договора (тестовый/внутренний/коммерческий), неизменяемость договора после создания.
 - [[Offer Actions Rules]] — правила доступности действий над сделкой/оффером по состоянию согласования.
 - [[Preapproved Order Integration]] — интеграция с Order Processing после согласования оффера (DFDEV-1908).
 - [[Approval Cutover Runbook]] — операционный порядок перевода legacy approvals на stage workflow.
