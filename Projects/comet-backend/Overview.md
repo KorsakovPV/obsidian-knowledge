@@ -67,6 +67,8 @@ python app/main.py            # uvicorn на localhost:8022
 - [[LKM Role Model]] — ролевая модель ЛКМ (БТ02): роли, пермиссии, RBAC + персональные права.
 - [[BT02 Role Model Gaps]] — тикеты по расхождениям БТ02 и текущей реализации.
 - [[Sequential KP Approval Tickets]] — декомпозиция реализации последовательного согласования КП.
+- [[DFDEV-2052 Deal and Offer Status Contract]] — нарезка контракта фронта на тикеты:
+  статус и этапы сделки, КП-статус офера, структурный статус БЗ из ITSM, история сделки.
 - [[Offer Actions Rules]] — правила доступности действий над сделкой/оффером по состоянию согласования.
 - [[Preapproved Order Integration]] — интеграция с Order Processing после согласования оффера (DFDEV-1908).
 - [[Approval Cutover Runbook]] — операционный порядок перевода legacy approvals на stage workflow.
