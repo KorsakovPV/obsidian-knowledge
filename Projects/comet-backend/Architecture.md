@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-04
+updated: 2026-08-05
 tags: [project, architecture, fastapi]
 ---
 
@@ -66,7 +66,11 @@ app/
   запустить v2 без него.
 - Флаги: `APP_DEBUG_EMAIL_REDIRECT` — переадресация писем согласования и послабление
   авторизации решений на тестовом контуре (см. [[Approval Debug Mode]]);
-  `ORDER_PROCESSING_SEND_EXTERNAL_CONTEXT` — трассировка approval/offer в payload ОП.
+  `ORDER_PROCESSING_SEND_EXTERNAL_CONTEXT` — трассировка approval/offer в payload ОП;
+  `ORDER_PROCESSING_STATUS_BATCH_ENABLED` — батчевое чтение статусов заказов через
+  фильтр `id__in` вместо запроса на заказ (включается стендом, когда фильтр доехал
+  до ОП). Рядом — таймаут чтения статусов, размер батча, лимит параллельности и
+  пороги предохранителя, см. [[Offer Order Status]].
   Флага `APP_APPROVAL_WORKFLOW_V2_ENABLED` больше нет: staged workflow —
   единственный, включать его нечем.
 - Таймзона по умолчанию — `Europe/Moscow`.
@@ -208,6 +212,11 @@ app/
 - После полного `answered/approve` `OfferImplementationService` создаёт по одному заказу
   ОП на каждый offer одобренного snapshot; ключ идемпотентности — детерминированный
   UUIDv5 от пары `(approval_id, offer_id)`, состояние хранится в `offer_implementations`.
+  Там же сохраняется снимок КП-фазы оффера — первая точка мини-таймлайна карточки.
+- Статус созданного заказа дальше живёт в ITSM и читается из ОП **на каждый запрос
+  сделки**, а не хранится: заказы всей страницы забираются одним вызовом, недоступность
+  ОП деградирует до сохранённого значения и прикрыта предохранителем. Подробно —
+  [[Offer Order Status]].
 - В debug-режиме письма согласования уходят инициатору процесса, а не реальным
   согласующим: адрес резолвится от `approval.requested_by_user_id` в момент создания
   уведомления и кладётся в его payload, потому что outbox отправляет письмо вне
@@ -233,7 +242,9 @@ app/
 |--------|-----------|
 | `classifier.py` (`ClassifierService`) | Классификатор продуктов/услуг |
 | `customers/` (`CustomersClientService`, `CustomersContractsService`, `CustomersStaffersService`) | Клиенты, договоры, сотрудники. Договор сделки выбирается при её создании, тип договора считается по номеру — [[Deal Contract Selection]] |
-| `order_processing.py` (`OrderProcessing`) | Создание заказов в ОП по офферам |
+| `order_processing.py` (`OrderProcessing`) | Создание заказов в ОП по офферам и чтение их актуальных статусов — [[Offer Order Status]] |
+| `order_status.py` (`OrderStatusService`) | Собирает статусы заказов страницы одним походом в ОП и подставляет в офферы |
+| `kp_phase.py` | Вычисление КП-фазы оффера из состояния согласования сделки |
 | `bitrix24.py` | Интеграция с Bitrix24 (сделки) |
 | `keycloak.py` / `auth.py` | Аутентификация и токены |
 | `s3.py` | Хранение вложений сделок и пре-тарифов |

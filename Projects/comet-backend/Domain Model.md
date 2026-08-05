@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-04
+updated: 2026-08-05
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -64,6 +64,9 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `created_by`, `updated_by?`.
 - Связи: `deal`, `order` (0..1, `OfferOrder`). Offer-level связи с `approval` больше
   нет — согласование принадлежит сделке.
+- КП-фаза оффера (`in_progress` / `formed` / `approval` / `approved` / `returned`)
+  **не хранится**: вычисляется из состояния оффера и текущей версии согласования
+  сделки — см. [[Offer Order Status]].
 - `special_conditions?` — nullable особые условия КП; передаются без преобразований
   в создаваемый заказ ОП.
 
@@ -171,6 +174,14 @@ stage несколько delivery rows относятся к одной notifica
 Связь оффера с заказом во внешней системе ОП (Order Processing).
 
 - `offer_id` → `offer`, `order_id` (UUID в ОП), `order_number`, `order_status?`.
+- `synced_at?` — когда статус БЗ последний раз успешно прочитан из ОП. Статус читается
+  на каждый запрос сделки, а сохранённое значение служит фоллбеком при недоступном ОП;
+  по `synced_at` фронт отличает живое значение от устаревшего. `NULL` — из ОП ни разу
+  не перечитывали.
+- `kp_phase_code?`, `kp_phase_at?` — снимок КП-фазы оффера на момент создания заказа,
+  первая точка мини-таймлайна. Хранится только код: подпись и вид выводятся при отдаче.
+- Тип заказа и заголовок статуса **не хранятся**: они приходят из ОП вместе со статусом.
+  Подробно — [[Offer Order Status]].
 
 ## DealAttachment — `deal_attachment`
 
