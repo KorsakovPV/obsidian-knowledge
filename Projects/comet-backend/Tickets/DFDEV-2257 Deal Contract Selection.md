@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-05
 tags: [project, tickets, deal, contracts, customers, bt03]
 ---
 
@@ -450,6 +450,26 @@ DoD:
    передачи в имплементацию.
 6. После создания сделки договор изменить нельзя — по аналогии с контрагентом
    (раздел «Общие данные», требование 5).
+
+## Правка после релиза: 404 customers ≠ ошибка (2026-08-05)
+
+Customers на выборку без совпадений отвечает **404**, а не пустым массивом, и
+`CustomerContractsAPI.list` превращает это в `CustomersNotFoundError`. Для поиска
+договоров это не сбой, а «искать нечего», поэтому оба вызова `contracts_service.list`
+в `DealService` (валидация переданного договора и поиск TST-договора) идут через новый
+`DealService._list_contracts`, который ловит `CustomersNotFoundError` и возвращает
+пустой список; решение принимает вызывающий.
+
+Что чинилось:
+
+- несуществующий `contract_id` отдавал наружу 404 customers с его собственным текстом
+  вместо нашей 400 «Договор не найден у выбранного клиента или удалён»;
+- клиент вообще без договоров (первая сделка) ломал создание тестовой сделки — вместо
+  создания TST-договора улетала ошибка customers.
+
+Тесты: `tests/services/test_deal_contract.py` —
+`test_customers_404_is_treated_as_not_found`,
+`test_client_without_any_contracts_gets_test_contract`.
 
 ---
 

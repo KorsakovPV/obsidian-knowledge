@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-08-04
+updated: 2026-08-05
 source: docs/lkm_role_model.md
 tags: [project, design, approval, lkm, rbac]
 ---
@@ -268,7 +268,11 @@ worker после commit отправляет deliveries с retry/backoff и
   `[debug → <реальный адресат>]`;
 - если инициатор неизвестен или у него не заполнен `lkm_users.email`, получателя нет и
   доставка отменяется (`DebugRedirectRecipientUnknown`) — реальному согласующему письмо
-  не уходит.
+  не уходит;
+- вместе с подменой получателя снимается и проверка прав на решение: инициатор может
+  закрыть любую стадию своего согласования. Условие одно на оба послабления —
+  `settings.app.redirects_email_to_initiator`, то есть оба флага сразу
+  (см. [[Approval Debug Mode]]).
 
 ## State machine
 

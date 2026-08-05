@@ -64,8 +64,10 @@ app/
   TTL stage token (14 дней), SLA по stage code (3 дня), размер пачки и backoff worker-а.
   Некорректный ключ отклоняется при загрузке настроек, `ensure_ready()` не даёт
   запустить v2 без него.
-- Флаги: `APP_DEBUG_EMAIL_REDIRECT` — переадресация писем согласования и послабление
-  авторизации решений на тестовом контуре (см. [[Approval Debug Mode]]);
+- Флаги: `APP_DEBUG` + `APP_DEBUG_EMAIL_REDIRECT` — вместе (`AppSettings.
+  redirects_email_to_initiator`) включают переадресацию писем согласования инициатору и
+  послабление авторизации решений на тестовом контуре (см. [[Approval Debug Mode]]);
+  на прод- и stage-контурах `APP_DEBUG_EMAIL_REDIRECT` выставлен `False` явно;
   `ORDER_PROCESSING_SEND_EXTERNAL_CONTEXT` — трассировка approval/offer в payload ОП;
   `ORDER_PROCESSING_STATUS_BATCH_ENABLED` — батчевое чтение статусов заказов через
   фильтр `id__in` вместо запроса на заказ (включается стендом, когда фильтр доехал
@@ -218,13 +220,17 @@ app/
   сделки**, а не хранится: заказы всей страницы забираются одним вызовом, недоступность
   ОП деградирует до сохранённого значения и прикрыта предохранителем. Подробно —
   [[Offer Order Status]].
-- В debug-режиме письма согласования уходят инициатору процесса, а не реальным
+- На контуре с переадресацией (`APP_DEBUG` и `APP_DEBUG_EMAIL_REDIRECT` вместе) письма
+  согласования уходят инициатору процесса, а не реальным
   согласующим: адрес резолвится от `approval.requested_by_user_id` в момент создания
   уведомления и кладётся в его payload, потому что outbox отправляет письмо вне
   запроса. Если инициатор неизвестен или у него нет email, доставка отменяется —
   реальный согласующий письма не получает. Вместе с переадресацией снимается проверка
   прав на решение: инициатор может закрыть любую стадию своего согласования
-  (`approval_debug_access.py`), иначе маршрут не пройти. Токен, статус стадии,
+  (`approval_debug_access.py`), иначе маршрут не пройти. Оба послабления включаются
+  одним и тем же условием `redirects_email_to_initiator`, поэтому там, где письма
+  уходят настоящим согласующим, инициатор без прав получает `permission_denied`.
+  Токен, статус стадии,
   актуальность снапшота и идемпотентность проверяются всегда, каждое такое решение
   пишется в лог warning-ом. Детали и порядок использования — [[Approval Debug Mode]].
 - TODO: добавить `offer.created_at` в будущие snapshot для полного ключа сортировки; до этого используется fallback по offer id.
@@ -242,7 +248,7 @@ app/
 | Сервис | Назначение |
 |--------|-----------|
 | `classifier.py` (`ClassifierService`) | Классификатор продуктов/услуг |
-| `customers/` (`CustomersClientService`, `CustomersContractsService`, `CustomersStaffersService`) | Клиенты, договоры, сотрудники. Договор сделки выбирается при её создании, тип договора считается по номеру — [[Deal Contract Selection]] |
+| `customers/` (`CustomersClientService`, `CustomersContractsService`, `CustomersStaffersService`) | Клиенты, договоры, сотрудники. Договор сделки выбирается при её создании, тип договора считается по номеру — [[Deal Contract Selection]]. Поиск договоров идёт через `DealService._list_contracts`: customers на выборку без совпадений отвечает 404, и для поиска это «ничего не найдено», а не сбой |
 | `order_processing.py` (`OrderProcessing`) | Создание заказов в ОП по офферам и чтение их актуальных статусов — [[Offer Order Status]] |
 | `order_status.py` (`OrderStatusService`) | Собирает статусы заказов страницы одним походом в ОП и подставляет в офферы |
 | `kp_phase.py` | Вычисление КП-фазы оффера из состояния согласования сделки |
@@ -262,7 +268,16 @@ app/
 
 - **Docker**: `Dockerfile` (+ `Dockerfile_base` для базового образа),
   `docker-compose.yaml` (host network, env из `.env`).
-- **Kubernetes**: манифесты в `k8s/`.
+- **Kubernetes**: манифесты в `k8s/manifests/`, переменные — в `k8s/configmaps/`
+  (по одной конфигмапе `comet-backend-env` на контур: `comet-backend-test`,
+  `comet-backend-stage`, прод `comet-backend`, плюс варианты `*-gw`). Отладочные
+  флаги согласования различаются по контурам — таблица в [[Approval Debug Mode]].
+- **Разовые скрипты**: `scripts/` в образ **не попадает** (`scripts/README.md`) —
+  код копируется в под руками и запускается там. Сейчас в директории:
+  `backfill_deal_contracts.py` (проставляет договор легаси-сделкам с
+  `contract_id IS NULL`: без флагов только считает объём, с `--apply` пишет, есть
+  `--limit`, идемпотентен — [[DFDEV-2257 Deal Contract Selection]]),
+  `approval_route_probe.py`, `price_filler.py`.
 - **CI (GitLab)**: стадии `builds → tests → release → deploy` (`.gitlab-ci.yml`),
   публикация образа в `df-ors-registry.datafort.ru`.
 - **Качество**: pre-commit (`make check`) — black (line-length 120), isort, flake8,
