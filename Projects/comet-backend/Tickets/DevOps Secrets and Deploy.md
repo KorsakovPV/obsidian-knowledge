@@ -80,6 +80,9 @@ Kubernetes Secrets **с перевыпуском** всех засвеченны
 - **`CUSTOMERS_PASSWORD`, `CLASSIFICATOR_PASSWORD`, `ORDER_PROCESSING_X_API_KEY`** —
   перевыпуск на стороне владельцев этих сервисов; для ОП это ключ, по которому нас
   аутентифицируют, координация с их командой.
+  Дополнение 2026-08-11: в тестовой конфигмапе теперь засвечена и учётка
+  `apigateway` для customers-**dev** (временное переключение стенда, см.
+  [[Restore Customers-T on Test Stand]]) — ротировать вместе с остальными.
 - **`KEYCLOAK_CLIENT_SECRET`** — regenerate в клиенте `comet-backend-api`.
 - **`BITRIX_WEBHOOK`** — перевыпуск вебхука в Bitrix24 (старый URL отзывается).
 - **S3, SMTP/IMAP** — перевыпуск у соответствующих владельцев.

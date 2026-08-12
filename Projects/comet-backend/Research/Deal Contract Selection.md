@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-08-04
-updated: 2026-08-05
+updated: 2026-08-11
 source: docs/deal_contract_selection.md
 tags: [project, research, deal, contracts, customers, bt03]
 ---
@@ -122,6 +122,6 @@ Order Processing (`app/services/contracts/contract_helpers.py`), чтобы по
 - `app/helpers/contract_types.py` — классификация по номеру.
 - `app/helpers/constants.py` — `SELLER_PARENT_CLIENT_IDS`, `SELLER_PARENT_CONTRACT_IDS`.
 - `app/schemas/customers/contracts.py` — `contract_type` в выдаче, фильтр `seller`.
-- `app/services/deal.py` — `_resolve_deal_contract_id`, `_validate_deal_contract`,
+- `app/services/deal.py` — `_resolve_deal_contract`, `_validate_deal_contract`,
   `_get_or_create_test_contract`, `_load_deal_contracts`, `_ensure_legacy_deal_contract`.
 - `app/schemas/deal.py` — `DealSchema.contract_type`, `DealContractUpdateSchema`.

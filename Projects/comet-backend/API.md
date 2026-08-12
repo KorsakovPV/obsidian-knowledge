@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-05
+updated: 2026-08-11
 tags: [project, api, rest, fastapi]
 ---
 
@@ -48,6 +48,10 @@ tags: [project, api, rest, fastapi]
 Skip доступен только для optional stage, reassign — только для единоличной (для групповой
 возвращается `reassign_not_supported_for_group_stage`).
 
+Задача в `pending` содержит `kp_attachment` (id, имя, MIME-тип, размер) — текущий файл
+КП сделки; `null` у сделок без файла. Сам файл согласующий скачивает ручкой
+`GET /deals/{deal_id}/attachments/{attachment_id}/file` (deal_id в задаче есть).
+
 ## Deals (сделки) — `/deals`
 
 | Метод | Путь | Назначение |
@@ -69,6 +73,16 @@ Skip доступен только для optional stage, reassign — толь�
 одобренному снимку, по одному на оффер, с идемпотентным ключом; если часть заказов не
 создана — 409, сделка не считается переданной.
 
+Сбой на границе с ОП отдаётся с кодом `order_processing_upstream_error` и блоком
+`upstream` (сервис, статус, URL, полное тело ответа ОП — включая тело 5xx, усечённое
+до 2000 символов): сеть/5xx/429 → **502** «инцидент ОП», 4xx → **500** «ОП отклонил
+запрос: ошибка интеграции на стороне Кометы» (не ретраебельная). Это работает и на
+`start-implementation`, и на ручном `POST /orders/{offer_id}`. Наши бизнес-ошибки
+(сделка без оферов, без договора) остаются 400; таймаут POST предсогласованного
+заказа не считается сбоем — его разбирает идемпотентное GET-recovery, таймауты
+остальных вызовов ОП — обычная 502. Введено 2026-08-11 после инцидента,
+когда 500 от `GET /api/v2/staffers` ОП выглядел как 400 Кометы.
+
 ### Договор сделки
 
 `contract_id` принимается при создании и после создания не меняется. Договор
@@ -80,13 +94,29 @@ Skip доступен только для optional stage, reassign — толь�
 
 ## Вложения сделок — `/deals/{deal_id}/attachments`
 
-| Метод | Путь | Назначение |
-|-------|------|-----------|
-| POST   | `/deals/{deal_id}/attachments` | Загрузить вложение |
-| GET    | `/deals/{deal_id}/attachments` | Список вложений |
-| GET    | `/deals/{deal_id}/attachments/{attachment_id}` | Метаданные вложения |
-| DELETE | `/deals/{deal_id}/attachments/{attachment_id}` | Удалить вложение |
-| GET    | `/deals/{deal_id}/attachments/{attachment_id}/file` | Скачать файл (S3) |
+| Метод | Путь | Назначение | Право |
+|-------|------|-----------|-------|
+| POST   | `/deals/{deal_id}/attachments` | Загрузить файл КП (заменяет прежний) | `send_kp` |
+| GET    | `/deals/{deal_id}/attachments` | Список вложений | `view_deals` |
+| GET    | `/deals/{deal_id}/attachments/{attachment_id}` | Метаданные вложения | `view_deals` |
+| DELETE | `/deals/{deal_id}/attachments/{attachment_id}` | Удалить вложение | `send_kp` |
+| GET    | `/deals/{deal_id}/attachments/{attachment_id}/file` | Скачать файл (S3) | `view_deals` |
+
+Вложение сделки — это файл КП: он один на сделку, отдельного признака нет. Фронт
+собирает PDF (данные — `OfferService.get_tariffs_for_pdf`) и загружает его в момент
+отправки на согласование; повторная загрузка **заменяет** прежний файл (хранится
+последняя версия, версионирование — отдельным тикетом). Лимит — 20 МБ
+(`MAX_FILE_SIZE`), пустой файл отклоняется. Этот же файл уходит вложением в письме
+каждой стадии согласования и отдаётся согласующему в `GET /approval-stages/pending`.
+
+Права: загрузка и удаление — операции менеджера над отправляемым КП (`send_kp`, как
+у самой отправки на согласование); чтение и скачивание — `view_deals`, оно есть у
+всех ролей, включая согласующих (`product_owner`, `lawyer`), поэтому скачивание КП
+из задачи согласования работает.
+
+При активном согласовании (`pending`/`blocked`) POST и DELETE возвращают 409
+`approval_subject_locked` — файл зафиксирован, как и сама сделка. После отзыва
+согласования (draft-версия) замена снова доступна.
 
 ## Offers (офферы) — `/offers`
 
@@ -229,6 +259,8 @@ POST загрузка, GET список, GET метаданные, DELETE, GET �
 | отправка КП (`send_kp`-действия) | `send_kp` |
 | `POST /offers`, edit/delete оффера | `create_kp` |
 | `GET /offers`, `GET /offers/{id}` | `view_kp` |
+| `POST/DELETE` вложений сделки (файл КП) | `send_kp` |
+| `GET` вложений сделки, скачивание файла | `view_deals` |
 | внутренние/справочные ручки сделок | `require_admin` |
 | `POST /approval-stages/{id}/skip` | `skip_kp_approval_stage` |
 | `POST /approval-stages/{id}/reassign` | `reassign_kp_approval_stage` |
