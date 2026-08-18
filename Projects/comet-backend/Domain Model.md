@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-11
+updated: 2026-08-18
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -58,9 +58,11 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `product_id` (int) — продукт/услуга; `deal_id` → `deal`.
 - `technical_parameters` (JSONB), `tariffs` (JSONB) — тех. параметры и тарифы бланка заказа.
   Тариф хранит присланные клиентом `pk`, `quantity`, `price` (цена продажи),
-  `partner_client_price` (цена конечного потребителя, в бизнес-логике не участвует),
-  `group_code` и рассчитанные сервером `base_price`, `base_price_source`,
-  `discount_percent` — по ним route builder выбирает скидочный маршрут.
+  `partner_client_price` (цена конечного потребителя), `group_code` и рассчитанные
+  сервером `base_price`, `base_price_source`, `discount_percent` — по ним route builder
+  выбирает скидочный маршрут. `base_price_source` — `classifier` (прайс) либо
+  `client_price` (персональная цена клиента, тариф продан не ниже её и согласования не
+  требует, см. [[Discount Base and Personal Price]]).
 - `created_by`, `updated_by?`.
 - Связи: `deal`, `order` (0..1, `OfferOrder`). Offer-level связи с `approval` больше
   нет — согласование принадлежит сделке.
@@ -142,6 +144,10 @@ status (`pending/sent/failed/canceled`), attempts, `next_attempt_at`, `sent_at`,
 `last_error`. Уникальна пара `(notification_id, canonical_recipient_email)`. Для group
 stage несколько delivery rows относятся к одной notification/stage/token.
 
+Помимо доставки писем таблица служит источником истории согласующего: по
+`recipient_user_id` список стадий отвечает на вопрос «стадию мне присылали». Отсюда индекс
+`(recipient_user_id, notification_id)`.
+
 ## ApprovalStageEvent — `approval_stage_events`
 
 Неизменяемая ordered история переходов: `stage_id`, `approval_id`, `actor_user_id?`,
@@ -150,6 +156,12 @@ stage несколько delivery rows относятся к одной notifica
 `reason?`, `metadata` (JSONB), `sequence`, `source` (`system` | `api` | `email`),
 `source_id?`. Уникальны `(approval_id, sequence)` и — при заполненном `source_id` —
 `(approval_id, stage_id, actor_user_id, source, source_id)`.
+
+`actor_user_id` — единственное место, где хранится автор решения: у групповых стадий
+`assigned_user_id` пуст всегда, поэтому список стадий согласующего отвечает по событиям на
+вопрос «стадию решил я». Отсюда частичный индекс `(actor_user_id, stage_id)` по решающим
+действиям. Пропуск в них не входит: его делает держатель права управления стадиями,
+согласующим быть не обязанный.
 
 ## Идемпотентность команд — `approval_stage_decision_requests`, `approval_stage_mutation_requests`
 
