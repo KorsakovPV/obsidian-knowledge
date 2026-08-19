@@ -1,6 +1,7 @@
 ---
 project: comet-backend
 created: 2026-08-06
+updated: 2026-08-19
 source: docs/status_contract_for_frontend.md
 tags: [project, research, frontend-contract, status, deal, offers, orders]
 ---
@@ -29,7 +30,7 @@ tags: [project, research, frontend-contract, status, deal, offers, orders]
 | 2 | `POST /offers` — первый оффер | `draft` (маршрут построен) либо `not_required` (маршрут пуст) | `formed`; без тарифов — `in_progress` |
 | 3 | `POST /deals/{id}/approval/request` | `pending`, заполнен `active_stage` | `approval` + `stage_code` |
 | 4 | стадии решают | `approved` / `rejected` / `blocked` | `approved` / `returned` / `approval` |
-| 5 | `POST /deals/{id}/start-implementation` | без изменений | без изменений; у оффера появляется `order` |
+| 5 | `POST /deals/{id}/start-implementation` | без изменений | без изменений; у оффера появляется `order`. Частичный провал — 422 с `failed_offers`, см. [[Видимая причина провала имплементации]] |
 
 Согласование рождается **при первом оффере** (маршрут строится из тарифов), а не при
 создании сделки и не при отправке: request только запускает уже существующий draft.

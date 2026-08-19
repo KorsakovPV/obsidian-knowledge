@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-18
+updated: 2026-08-19
 tags: [project, architecture, fastapi]
 ---
 
@@ -377,7 +377,7 @@ app/
 |--------|-----------|
 | `classifier.py` (`ClassifierService`) | Классификатор продуктов/услуг |
 | `customers/` (`CustomersClientService`, `CustomersContractsService`, `CustomersStaffersService`) | Клиенты, договоры, сотрудники. Договор сделки выбирается при её создании, тип договора считается по номеру — [[Deal Contract Selection]]. Поиск договоров идёт через `DealService._list_contracts`: customers на выборку без совпадений отвечает 404, и для поиска это «ничего не найдено», а не сбой |
-| `order_processing.py` (`OrderProcessing`) | Создание заказов в ОП по офферам и чтение их актуальных статусов — [[Offer Order Status]]. Сбой ОП — `OrderProcessingUpstreamError` с полным ответом ОП в `upstream.*`: сеть/5xx/429 → **502** «инцидент ОП», 4xx → **500** «баг интеграции на нашей стороне». Таймаут не заворачивается только у POST предсогласованного заказа — его разбирает идемпотентное GET-recovery (`_call_op` → `get_by_external_approval`); таймауты остальных вызовов — обычная 502 «ОП недоступен». Бизнес-ошибки («нет договора», «не согласована») остаются 400 |
+| `order_processing.py` (`OrderProcessing`) | Создание заказов в ОП по офферам и чтение их актуальных статусов — [[Offer Order Status]]. Сбой ОП — `OrderProcessingUpstreamError` с полным ответом ОП в `upstream.*`: сеть/5xx/429 → **502** «инцидент ОП», 4xx → **500** «баг интеграции на нашей стороне». Таймаут не заворачивается только у POST предсогласованного заказа — его разбирает идемпотентное GET-recovery (`_call_op` → `get_by_external_approval`); таймауты остальных вызовов — обычная 502 «ОП недоступен». Бизнес-ошибки («нет договора», «не согласована») остаются 400. Форму блока (`service`, `status`, `url`, `body`) собирает общий хелпер `app/helpers/upstream_error.py`: она одна и в `upstream` у 502/500, и в `failed_offers[].error` у 422 частичного провала имплементации — [[Видимая причина провала имплементации]] |
 | `order_status.py` (`OrderStatusService`) | Собирает статусы заказов страницы одним походом в ОП и подставляет в офферы |
 | `kp_phase.py` | Вычисление КП-фазы оффера из состояния согласования сделки |
 | `bitrix24.py` | Интеграция с Bitrix24 (сделки) |
