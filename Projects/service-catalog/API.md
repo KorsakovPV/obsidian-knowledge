@@ -73,6 +73,23 @@ GET-список и создание без дублей, права `ViewModelP
 - `/api/logs/` (`LogView`) — журнал изменений, только чтение, пагинация,
   фильтры по модели/автору/дате.
 
+### Контракт создания тарифа
+
+`POST /api/tariffs/` принимает вложенный payload:
+
+- собственные поля тарифа — `title`, `code`, `start_at`, `end_at`, `comment`,
+  `access_period`, `is_price_protected`;
+- `element` — элемент тарификации: единица, тип потребления, `price`,
+  `cost_price`, валюта, частота обновления, `flat_rate`;
+- `service` — ветка услуги: элемент услуги → услуга → линейка → линия бизнеса,
+  каждая со своим кодом (создаётся каскадным `get_or_create`);
+- `locations` и `related_tariffs` — массивами ключей.
+
+Тот же контракт собирает фронт классификатора (`service-catalog-front`,
+сериализатор формы `AddOrUpdateServiceModal` / `AddUpdateTariff`). Правила
+валидации, версионирования и неизменяемых полей — в
+[[Architecture#Правила создания и изменения тарифа]].
+
 ### Валидации при записи тарифа
 
 `classifier/serializers/tariff_serializer.py::TariffSerializer`:
