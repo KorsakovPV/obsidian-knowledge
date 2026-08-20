@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-19
+updated: 2026-08-20
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -225,6 +225,15 @@ stage несколько delivery rows относятся к одной notifica
 - `pre_tariff_comment`: `pre_tariff_id`, `comment`, `created_by`, `updated_by?`.
 - `pre_tariff_attachment`: `pre_tariff_id`, `file_name`, `storage_key`, `content_type?`,
   `size?`, `uploaded_by?`.
+
+Связи с чем-либо нет: FK `offer_id` снят миграцией `a2b4c6d8e0f1` (DFDEV-1846).
+
+Целевая модель (не реализована, [[Предтариф как черновик тарифа]]) превращает предтариф в
+**заявку** вокруг черновика тарифа в классификаторе: `classifier_tariff_id` (pk черновика),
+`status` (`draft → review → approved`), `product_id`, мягкие `client_id`/`deal_id` (UUID без
+FK-каскада — урок DFDEV-1846), `quantity_params` (`{min, max, step}`), денормализованные
+`title`/`price`/`cost_price`, `decided_by`/`decided_at` и журнал `pre_tariff_event` по образцу
+`approval_stage_events`; плюс `pre_tariff_read_marker` для счётчиков непрочитанных в чате.
 
 ## ClientPrice — `client_price`
 

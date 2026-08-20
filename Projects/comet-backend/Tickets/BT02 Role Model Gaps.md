@@ -97,6 +97,8 @@ DoD:
 - Навесить `approve_tariffs` на endpoint согласования тарифов после появления/уточнения endpoint.
 - Добавить API-level tests на 403 без permission и успешный доступ с permission.
 
+Endpoint согласования тарифов появляется в CM-2 плана [[Тикеты: предтариф как черновик тарифа]] (`POST /pre-tariffs/{id}/approve`) — этот тикет закрывается вместе с ним.
+
 ## Ticket 6 — Передавать permissions в actions при сборке API-ответов
 
 Проблема: action resolvers умеют учитывать permissions, но при сборке `DealSchema` и

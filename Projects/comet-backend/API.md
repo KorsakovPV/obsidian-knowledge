@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-19
+updated: 2026-08-20
 tags: [project, api, rest, fastapi]
 ---
 
@@ -283,6 +283,14 @@ Skip доступен только для optional stage, reassign — толь�
 На 2026-07-23 permissions из БТ02 на этих ручках ещё не навешаны. Целевое состояние:
 `create_tariff` для создания/просмотра/редактирования, `approve_tariffs` для
 согласования тарифов; см. [[BT02 Role Model Gaps]].
+
+Целевой контракт (пока не реализован, [[Предтариф как черновик тарифа]]): те же CRUD плюс
+поля заявки (`status`, `classifier_tariff_id`, `product_id`, `client_id`/`deal_id`,
+`quantity_params`, денормализация `title`/`price`/`cost_price`, история переходов), переходы
+`POST /{id}/submit` / `withdraw` / `approve` (идемпотентные, 409 при конфликте статуса),
+`POST /pre-tariff-comments/read` со счётчиками непрочитанных и агрегат
+`GET /tariff-classifier/tree` для формы черновика. Удаление — автору в `draft`/`review`;
+позиция, лежащая в оффере, не удаляется ни в каком статусе.
 
 ### Комментарии пре-тарифов — `/pre-tariff-comments`
 
