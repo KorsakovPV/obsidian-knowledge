@@ -131,7 +131,7 @@ source: "/home/pavel/Downloads/Предтариф как черновик тар
 в AD-группу классификатора с правами `classifier.add_tariff` /
 `classifier.change_tariff`.
 
-### CL-1. Поле `is_draft_tariff`
+### CL-1. Поле `is_draft_tariff` — сделано (ветка DFDEV-2263)
 
 **Что сделать.** В `backend/classifier/models/tariff.py` добавить
 `Tariff.is_draft_tariff = models.BooleanField(default=False, verbose_name='Черновик тарифа')`
@@ -145,6 +145,33 @@ source: "/home/pavel/Downloads/Предтариф как черновик тар
 `false`); `GET /api/tariffs/{id}/` и `POST /api/tariffs/query_tariff/` отдают
 поле; фильтр `is_draft_tariff=true` работает.
 
+### Хвосты, вскрытые ревью CL-1
+
+Не входят в CL-1, но должны быть учтены:
+
+- **Релизный шаг для CL-1/CL-2.** Кэш продуктов в Redis (db=3) пишется
+  `ProductListViewSet.get_from_cache` без TTL и обновляется только по
+  `post_save` моделей классификатора (`update_product_cache`). После деплоя
+  `/api/products/` продолжит отдавать закэшированные payload-ы **без** ключа
+  `is_draft_tariff`, пока что-нибудь не сохранится, — потребитель на
+  `tariff['is_draft_tariff']` получит KeyError. В релиз включить
+  `DELETE /api/products/drop_cache`.
+- **Отдельный тикет: сломанное право `can_change_comment`.**
+  `TariffViewModelPermissions.get_diff_tariff` перебирает все поля модели, а
+  `compare_serializers.TariffSerializer` содержит только часть, поэтому в diff
+  уже до CL-1 попадали `num_clients` и `is_price_protected` — проверка
+  «изменился только комментарий» не проходит никогда. Проверено на тестовой
+  БД: `['service', 'element', 'start_at', 'num_clients', 'is_price_protected']`
+  до ветки и то же плюс `is_draft_tariff` после. Чинить целиком: либо
+  синхронизировать compare-сериализатор с моделью, либо исключать read-only
+  поля; тогда же внести `is_draft_tariff` в `exclude_tuple`.
+- `product_serializer.TariffSerializer` отдаёт флаг без явного `read_only`.
+  Сериализатор используется только на чтение (`ReadOnlyModelViewSet`), так что
+  это косметика.
+- Признака нет в `TariffShortSerializer` (`/api/tariff_short/`). После CL-2
+  черновики оттуда исключаются целиком, поэтому отличать там нечего —
+  доработка не нужна.
+
 ### CL-2. Фильтрация черновиков из списочных выдач
 
 Зависит от CL-1.
@@ -156,8 +183,16 @@ source: "/home/pavel/Downloads/Предтариф как черновик тар
 карточки офферов. Ту же логику — в `ExcelView`, `TariffShortView` и
 `FilterView`. `count_all` в `list` считать по отфильтрованному queryset.
 
-**Критерии.** Списки, поиск, excel и фильтры не содержат черновиков;
-`query_tariff` с `id__in`, включающим pk черновика, возвращает его с
+Отдельным пунктом — **внешнее API `listapi`**: `listapi.TariffListView` имеет
+свой `get_queryset`, не наследующий тарифную вьюху, и обслуживает
+`/api/listapi/tariffs/` и `/api/listapi/query_tariff/` — ручку, в которую
+ходит comet-backend. Без правки в этом классе черновики утекут сторонним
+потребителям. Исключение по `id` / `id__in` там нужно такое же: Комета
+рендерит офферы именно этими запросами.
+
+**Критерии.** Списки, поиск, excel и фильтры не содержат черновиков —
+в том числе выдачи `/api/listapi/`; `query_tariff` (обе ручки, тарифная и
+listapi) с `id__in`, включающим pk черновика, возвращает его с
 `is_draft_tariff=true`; явный параметр `is_draft_tariff=true` отдаёт только
 черновики.
 
