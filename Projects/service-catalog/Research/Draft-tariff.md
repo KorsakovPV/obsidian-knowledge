@@ -40,7 +40,7 @@ source: "/home/pavel/Downloads/Предтариф как черновик тар
 
 ## Что нужно доделать в классификаторе
 
-1. **Поле `Tariff.is_draft_tariff`** (bool, default false) + миграция.
+1. ✅ **Поле `Tariff.is_draft_tariff`** (bool, default false) + миграция — сделано, CL-1.
 2. **Фильтрация существующих выдач.** Черновики исключаются из списочных
    запросов — `list` / `query_tariff` без id-фильтра, `/api/tariff_short/`,
    `/api/filter/`, excel, связанные тарифы. Исключение: запросы по `id` /
@@ -131,7 +131,9 @@ source: "/home/pavel/Downloads/Предтариф как черновик тар
 в AD-группу классификатора с правами `classifier.add_tariff` /
 `classifier.change_tariff`.
 
-### CL-1. Поле `is_draft_tariff` — сделано (ветка DFDEV-2263)
+### CL-1. Поле `is_draft_tariff` — ✅ сделано
+
+**Статус.** Реализовано в ветке `DFDEV-2263` (коммиты `09a7824`, `ef553fd`), ревью пройдено, замечания закрыты. В `develop` пока не влито. Критерии тикета проверены: миграция применена на заполненной БД (все строки `false`), поле приходит в деталке и `query_tariff`, фильтр `is_draft_tariff` работает.
 
 **Что сделать.** В `backend/classifier/models/tariff.py` добавить
 `Tariff.is_draft_tariff = models.BooleanField(default=False, verbose_name='Черновик тарифа')`
@@ -247,7 +249,7 @@ listapi) с `id__in`, включающим pk черновика, возвращ
 | Волна | service-catalog | comet-backend | comet-front |
 | --- | --- | --- | --- |
 | 0 (орг) | права сервисной УЗ (AD-группа) | — | — |
-| 1 | CL-1 → CL-2 | CM-1, CM-4 (параллельно) | FR-1 |
+| 1 | ✅ CL-1 → CL-2 | CM-1, CM-4 (параллельно) | FR-1 |
 | 2 | CL-3 → CL-4 | CM-2, CM-3 | FR-2 |
 | 3 | — | CM-5 (после CL-3/CL-4 и CM-2) | FR-3, FR-5 |
 | 4 | — | CM-6 (стадии маршрута — после ответа аналитика) | FR-4 |
