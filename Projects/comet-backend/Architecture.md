@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-20
+updated: 2026-08-24
 tags: [project, architecture, fastapi]
 ---
 
@@ -165,7 +165,8 @@ app/
 > Реализация уже содержит 8 ролей и 22 пермиссии БТ02, а сид БТ02 применён через
 > миграцию `2026_07_21_1200-f1a2b3c4d5e6_bt02_roles_permissions.py`. Оставшиеся
 > расхождения с целевой моделью: `require_admin` проверяет роль, roles всё ещё
-> enum в коде, отключён фильтр ephemeral, pre-tariffs без permission guards.
+> enum в коде, отключён фильтр ephemeral. Ручки предтарифа закрыты правами 24.08.2026
+> (`create_tariff` / `approve_tariffs`), тикет 5 закрыт.
 > Контроль единоличных permissions реализован 14.08.2026 (см. выше).
 > Подробно — [[BT02 Role Model Gaps]].
 

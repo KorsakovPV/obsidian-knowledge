@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-08-20
+updated: 2026-08-24
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -217,23 +217,51 @@ stage несколько delivery rows относятся к одной notifica
   вложение на сделку» нет сознательно — оно противоречило бы будущему
   версионированию; сериализацию конкурентных загрузок даёт та же блокировка.
 
-## PreTariff — `pre_tariff` (+ комментарии и вложения)
+## PreTariff — `pre_tariff` (+ события, комментарии и вложения)
 
-Пре-тариф (заготовка тарифа) с обсуждением.
+**Заявка на предтариф**: обвязка Кометы вокруг черновика тарифа, который живёт записью
+классификатора. Модель заявки (CM-1, миграция `c6d7e8f9a0b1`) и жизненный цикл — переходы
+статусов, права, guard удаления (CM-2) — реализованы 24.08.2026
+([[Тикеты: предтариф как черновик тарифа]]); прокси в классификатор — ещё нет.
 
-- `pre_tariff`: `description`, `created_by`, `updated_by?`; связи `comments`, `attachments`.
+- `pre_tariff`: `status` (`draft` / `review` / `approved`, дефолт `draft`),
+  `classifier_tariff_id?` (pk черновика в классификаторе), `product_id?`,
+  `client_id?`, `deal_id?`, `title`, `description` (обоснование заявки),
+  `price?` / `cost_price?` (`numeric(10,2)`), `quantity_params` (JSONB, дефолт `{"min": 1}`),
+  `decided_by?` / `decided_at?`, `created_by`, `updated_by?`;
+  связи `events`, `comments`, `attachments`.
+- `pre_tariff_event`: `pre_tariff_id`, `actor`, `actor_role?`, `action`, `old_status?`,
+  `new_status` — журнал по образцу `approval_stage_events`, но без `sequence`: события
+  одной транзакции упорядочены тай-брейком по `id` (uuid6 монотонен по времени).
 - `pre_tariff_comment`: `pre_tariff_id`, `comment`, `created_by`, `updated_by?`.
 - `pre_tariff_attachment`: `pre_tariff_id`, `file_name`, `storage_key`, `content_type?`,
   `size?`, `uploaded_by?`.
 
-Связи с чем-либо нет: FK `offer_id` снят миграцией `a2b4c6d8e0f1` (DFDEV-1846).
+Ограничения:
 
-Целевая модель (не реализована, [[Предтариф как черновик тарифа]]) превращает предтариф в
-**заявку** вокруг черновика тарифа в классификаторе: `classifier_tariff_id` (pk черновика),
-`status` (`draft → review → approved`), `product_id`, мягкие `client_id`/`deal_id` (UUID без
-FK-каскада — урок DFDEV-1846), `quantity_params` (`{min, max, step}`), денормализованные
-`title`/`price`/`cost_price`, `decided_by`/`decided_at` и журнал `pre_tariff_event` по образцу
-`approval_stage_events`; плюс `pre_tariff_read_marker` для счётчиков непрочитанных в чате.
+- `pre_tariff_status_valid` — check-constraint на три значения статуса. Литералы
+  сознательно не генерируются из enum: DDL описывает то, что лежит в базе, иначе новое
+  значение молча меняло бы модель без миграции.
+- `pre_tariff_classifier_tariff_id_key` — partial unique index (`WHERE ... IS NOT NULL`):
+  один черновик классификатора описывается одной заявкой, а пустых ссылок много —
+  черновик появляется позже самой заявки.
+- `client_id`/`deal_id` — UUID **без FK** (урок DFDEV-1846): удаление сделки не должно
+  уносить заявку, тариф переживает сделку и может быть продан другой.
+
+Денормализация `title`/`price`/`cost_price` — чтобы список заявок строился без похода в
+классификатор построчно; источник истины по этим полям остаётся классификатор
+(`numeric(10,2)` совпадает с его колонками, длина имени ограничена 255 на входе).
+
+Создание заявки пишет событие `created` в той же транзакции — иначе история начиналась бы
+с первого перехода. `approved` терминален: опубликованный тариф в черновики не возвращают.
+
+Переходы статусов пишутся тем же запросом, что и меняет статус: строка берётся
+`FOR UPDATE`, событие журнала вставляется в той же транзакции. Повтор уже выполненного
+перехода событий не добавляет.
+
+Ещё не реализовано ([[Предтариф как черновик тарифа]]): таблица `pre_tariff_read_marker`
+для счётчиков непрочитанных (CM-3) — поле `unread_count` в списке пока заглушка-ноль,
+прокси в классификатор (CM-5) и флаг черновика в офферах и КП (CM-6).
 
 ## ClientPrice — `client_price`
 

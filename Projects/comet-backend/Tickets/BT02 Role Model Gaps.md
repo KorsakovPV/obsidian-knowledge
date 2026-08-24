@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-08-04
+updated: 2026-08-24
 source: docs/lkm_role_model.md
 source_pdf: Attachments/БТ02_ Ролевая модель - Datafort DEV - Confluence.pdf
 tags: [project, tickets, lkm, permissions, rbac]
@@ -84,7 +84,7 @@ DoD:
   согласованный lifecycle очистки.
 - Добавить тесты для видимого пользователя, скрытого ephemeral и удаления ephemeral.
 
-## Ticket 5 — Закрыть pre-tariff ручки permissions из БТ02
+## Ticket 5 — Закрыть pre-tariff ручки permissions из БТ02 — ЗАКРЫТ 24.08.2026
 
 Проблема: permissions `create_tariff` / `approve_tariffs` есть в коде, но ручки
 `/pre-tariffs` пока не проверяют LKM permissions.
@@ -97,7 +97,9 @@ DoD:
 - Навесить `approve_tariffs` на endpoint согласования тарифов после появления/уточнения endpoint.
 - Добавить API-level tests на 403 без permission и успешный доступ с permission.
 
-Endpoint согласования тарифов появляется в CM-2 плана [[Тикеты: предтариф как черновик тарифа]] (`POST /pre-tariffs/{id}/approve`) — этот тикет закрывается вместе с ним.
+Закрыт вместе с CM-2 из [[Тикеты: предтариф как черновик тарифа]]: чтение заявок — `create_tariff`
+или `approve_tariffs`, запись и переходы автора — `create_tariff`, `POST /pre-tariffs/{id}/approve` —
+`approve_tariffs`; теми же правами закрыты чат и вложения заявки.
 
 ## Ticket 6 — Передавать permissions в actions при сборке API-ответов
 
