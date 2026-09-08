@@ -1,6 +1,7 @@
 ---
 project: comet-backend
 created: 2026-08-11
+updated: 2026-09-08
 source: docs/datetime_utc_normalization_plan.md
 tags: [project, research, datetime, utc, api-contract]
 ---
@@ -59,9 +60,10 @@ aware → `astimezone(utc)`; рекурсивный обход list/dict для 
 - **риск**: если TZ хоста не UTC (этап 0.3), правка `:113` меняет результат
   `TSTZRANGE @>` запроса на величину смещения — это исправление бага, но
   задокументировать в ПР;
-- ревизия данных: `scripts/price_filler.py` писал naive-границы `valid_period`
-  (локальная полночь) и naive-сентинел `datetime(2099, 12, 31)` — одноразовый
-  SQL-аудит границ + фикс скрипта.
+- ревизия данных: удалённый `scripts/price_filler.py` писал naive-границы
+  `valid_period` (локальная полночь) и naive-сентинел
+  `datetime(2099, 12, 31)`; `scripts/price_filler_v2.py` нормализует дату заказа
+  в полночь UTC и пишет цену через штатный `ClientPriceCrud.upsert_from_order`.
 
 2.2. **Единая «дата заказа»**: `datetime.date.today()` (локальная) в
 `app/services/order.py:89` и `offer_implementation_service.py:360` против

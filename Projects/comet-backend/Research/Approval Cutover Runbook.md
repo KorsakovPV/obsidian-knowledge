@@ -1,13 +1,13 @@
 ---
 project: comet-backend
 created: 2026-07-28
-updated: 2026-08-04
+updated: 2026-09-08
 source: docs/approval_cutover_runbook.md
 status: historical
 tags: [project, research, approval, runbook, migration, historical]
 ---
 
-# Approval Cutover Runbook
+# Runbook: cutover согласований на stage workflow (Ticket 12) — ВЫПОЛНЕН, АРХИВ
 
 #research #approval #runbook #historical
 
