@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-09-08
+updated: 2026-09-23
 tags: [project, backend, fastapi, python]
 ---
 
@@ -43,15 +43,16 @@ tags: [project, backend, fastapi, python]
 ```bash
 poetry install
 cp .env.example .env          # заполнить креды БД, Keycloak, S3, SMTP/IMAP и т.д.
-alembic upgrade head          # применить миграции
-python app/main.py            # uvicorn на localhost:8022
+poetry run alembic upgrade head  # применить миграции
+poetry run python app/main.py     # uvicorn на localhost:8022
 ```
 
 - Swagger UI отдаётся на корне `/` (`docs_url='/'`).
 - Все ручки под префиксом `/api` (далее `/v1`), см. [[API]].
-- Проверки качества: `make check` (pre-commit: black, isort, flake8, mypy, bandit).
-- Тесты: `pytest`. Интеграционные тесты согласования требуют PostgreSQL и помечены
-  маркером `integration`; без базы — `pytest -m "not integration"`.
+- Проверки качества: `poetry run make check` (pre-commit: black, isort, flake8, mypy,
+  bandit).
+- Тесты: `poetry run pytest`. Интеграционные тесты согласования требуют PostgreSQL и
+  помечены маркером `integration`; без базы — `poetry run pytest -m "not integration"`.
 
 ## Карта документации
 
@@ -76,6 +77,9 @@ python app/main.py            # uvicorn на localhost:8022
 - [[Discount Base and Personal Price]] — от чего считается скидка тарифа: персональная цена
   клиента как ворота против прайса классификатора, осознанный обрыв на границе, кто вправе
   заводить персональные цены (DFDEV-2266).
+- [[DFDEV-2555 Уровни цен тарифов]] — план замены общих порогов 10/15/20 на GPL и L1–L3
+  из service-catalog: новая тарифная ручка v2, правила границ и блокировок, snapshot,
+  fetch-before-lock, открытые вопросы цены продажи и партнёрской шкалы.
 - [[Status Contract for Frontend]] — справка фронту: какие статусные данные уже есть в
   API, с какого шага жизни сделки появляются, чего пока нет (статусная строка БТ01,
   история).

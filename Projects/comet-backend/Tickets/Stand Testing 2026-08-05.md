@@ -9,7 +9,7 @@ tags: [project, testing, deal, contracts, offers, orders, stand]
 #project #testing #stand
 
 Связано: [[DFDEV-2257 Deal Contract Selection]], [[DFDEV-2052 Deal and Offer Status Contract]],
-[[Deal Contract Selection]], [[Offer Order Status]], [[Стенд comet-backend-test]].
+[[Deal Contract Selection]], [[Offer Order Status]], стенд `comet-backend-test`.
 
 Приёмочное тестирование на `https://comet-backend-test.datafort.ru` (клиент
 Systeme Electric, ИНН 9731012858). Версии: начали на **0.1.62**, по ходу выкатили два
