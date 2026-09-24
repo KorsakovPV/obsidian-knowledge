@@ -1,7 +1,7 @@
 ---
 project: order-processing
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-09-24
 tags: [project, backend, fastapi]
 ---
 
@@ -61,3 +61,6 @@ taskiq worker   --fs-discover --tasks-pattern 'app/tasks/**/*.py' tasks.broker:b
   заказа из внешнего сервиса (Comet).
 - [[Fractional-quantity]] — поэтапная поддержка дробного количества в тарифах
   (`quantity_decimal`, Decimal-fallback, запрет дробного для MDM/PG).
+- [[DFDEV-2584 — задержка get_contract_objs]] — разбор медленных и пустых
+  OP→Customers запросов, фактический HTTP-контракт и проверенный план исправления
+  без изменения контрактов между сервисами.

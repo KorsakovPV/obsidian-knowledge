@@ -1,7 +1,7 @@
 ---
 project: order-processing
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-09-24
 tags: [project, api]
 ---
 
@@ -85,3 +85,25 @@ PDF — `urls/create_pdf.py`.
 Через Keycloak (`datafort_utils.auth`, `core/config.py: KeycloakSettings`,
 `services/keycloak.py`). Защита путей — middleware `check_api_protected_paths`
 (`middleware/middleware_path_pass.py`).
+
+## Исходящий контракт с Customers
+
+Для bulk-получения контрактов OP использует:
+
+```text
+GET /api/v1/contracts
+  ?id__in=<UUID,UUID,...>
+  &relationship=true
+  [&is_deleted=true|false]
+```
+
+`id__in` передаётся одним CSV-параметром. Customers возвращает `200` с найденным
+подмножеством, `404`, если не найден ни один контракт, и `422` для пустого CSV
+или невалидного UUID. Реальный JSON при `relationship=true` нужно проверять по
+wire-response: OpenAPI объявляет базовую схему, а runtime-сериализация зависит от
+Pydantic-наследования и конфигурации extra fields.
+
+Для DFDEV-2584 действует жёсткое ограничение: не менять path, query semantics,
+auth, статусы, поля, типы и nullability ответа. Единственное обязательное
+изменение трафика — OP не должен выполнять запрос при пустом списке UUID.
+Подробнее: [[DFDEV-2584 — задержка get_contract_objs]].
