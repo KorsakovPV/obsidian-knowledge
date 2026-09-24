@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-23
-updated: 2026-08-04
+updated: 2026-09-24
 source: docs/lkm_role_model.md
 tags: [project, tickets, approval, lkm, rbac]
 ---
@@ -701,10 +701,10 @@ skip/reassign автоматически не выдаются.
   token/outbox создаются атомарно.
 - Для 403, stage not found, invalid status, invalid target и empty reason добавить
   отдельные пользовательские ошибки со стабильными machine-readable codes.
-- Публичные `retry_activation` для `blocked` approval и `resend` для истёкшего
-  token отложены до отдельного административного API-тикета. До утверждения
-  отдельных permissions и audit-контракта Ticket 10 не публикует эти endpoints;
-  внутренние workflow operations сохраняются для будущего orchestration.
+- Отдельный публичный endpoint `retry_activation` не добавлен. Повторный
+  `POST /deals/{deal_id}/approval/request` для `blocked` вызывает внутренний
+  `retry_activation` с прежним правом `send_kp`, сохраняет маршрут и пишет audit event.
+  `resend` для истёкшего token по-прежнему отложен до отдельного API-тикета.
 - Добавить API и service tests.
 
 DoD:

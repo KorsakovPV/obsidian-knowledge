@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-21
-updated: 2026-08-19
+updated: 2026-09-24
 source: docs/offer_actions_rules.md
 tags: [project, research, deals, offers, approval]
 ---
@@ -78,6 +78,10 @@ tags: [project, research, deals, offers, approval]
 - **Отзыв — единственное действие, которое активное согласование открывает**, а не
   закрывает. Отказ по нему приходит из состояний, где процесса нет, поэтому это отказ по
   правам, а не конфликт состояния.
+
+> [!note] Актуализация 24.09.2026
+> В текущем коде `request_approval` доступен также в `blocked`: он повторяет активацию
+> waiting-стадии без пересборки маршрута. В `pending` действие по-прежнему закрыто.
 
 ## Оффер (КП)
 

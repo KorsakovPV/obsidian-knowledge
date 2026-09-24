@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-07-21
-updated: 2026-07-23
+updated: 2026-09-24
 source: docs/lkm_role_model.md
 source_pdf: Attachments/БТ02_ Ролевая модель - Datafort DEV - Confluence.pdf
 tags: [project, research, lkm, permissions, rbac]
@@ -576,6 +576,11 @@ Guard'ы — по пермиссиям, не по роли (см. «Принци
 - `/api/v1/auth/user` — входная ручка ЛКМ:
   - создаёт пользователя с ролью по умолчанию (`DEFAULT_ROLE`), если его нет в `lkm_users`;
   - возвращает роль и effective permissions.
+
+> [!note] Актуализация 24.09.2026
+> Для существующей legacy-записи `/api/v1/auth/user` заполняет отсутствующий `email` из
+> токена и заменяет пустой либо технический `full_name == ad_login` на подтверждённое имя
+> Keycloak. Заполненные администратором значения не перезаписываются.
 - Остальные защищённые ручки:
   - middleware по `ad_login` получает LKM-пользователя, роль и effective permissions;
   - если пользователя нет в `lkm_users`, вернуть `403 {"detail": "Доступ запрещён"}`;
