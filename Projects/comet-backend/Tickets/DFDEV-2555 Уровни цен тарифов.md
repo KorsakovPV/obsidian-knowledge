@@ -14,8 +14,12 @@ tags: [project, ticket, approval, pricing, tariffs, service-catalog]
 
 ## Статус
 
-Планирование. Код DFDEV-2555 в Comet ещё не реализован. Целевой контракт и rollout
-полностью согласованы 24.09.2026; открытых вопросов для начала реализации нет.
+Реализовано локально в ветке `DFDEV-2555`, без commit/push. Добавлены переключатель
+модели, каталог v2, расчёт GPL/L1–L3, role guard, новый маршрут, pricing snapshot и
+настройки rollout: test — `price_levels`, stage/prod — `legacy_percent`.
+
+Код проходит проектные pytest, isort, black, flake8, bandit и mypy; перед публикацией
+ветки остаётся обычный MR-процесс.
 
 Полный журнал обсуждённых вопросов и ответов ведётся в
 [[Discount Base and Personal Price#Тикет DFDEV-2555]].
