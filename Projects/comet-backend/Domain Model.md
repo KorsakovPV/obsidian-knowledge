@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-09-08
+updated: 2026-09-29
 tags: [project, domain, database, sqlalchemy]
 ---
 
@@ -49,7 +49,22 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `staffers_contractor`, `staffers_customer`, `staffers_partner_customer` —
   списки UUID сотрудников.
 - `number` — порядковый номер сделки; `deal_date`, `created_by`, `updated_by?`.
-- Связи: `offers` (cascade delete-orphan), `attachments`, `approvals`.
+- `manager_id?` → `lkm_users` — доверенный ответственный менеджер. Для новой сделки
+  назначается текущему LKM-пользователю; legacy-строки заполняются только при
+  однозначном совпадении `created_by` с email или AD-login пользователя.
+- `last_changed_by_user_id?` → `lkm_users`, `last_changed_at?` — доверенные автор и
+  время последнего пользовательского изменения. Обе ссылки nullable и используют
+  `ON DELETE SET NULL`; строковые `created_by`/`updated_by` остаются display-fallback,
+  но не участвуют в `scope=my`.
+- Связи: `offers` (cascade delete-orphan), `attachments`, `approvals`, `manager`,
+  `last_changed_by_user`.
+
+Список `GET /deals` использует отдельный облегчённый контракт, а не полную ORM-модель.
+`client_title`/`client_inn`, объект менеджера, `last_change` и агрегат `summary`
+вычисляются при чтении. `summary.total_orders_count` считает офферы с локальной связью
+`offer_order`, а `summary.total_recurring_with_vat` складывает recurring-компоненты
+flat rate и usage based без one time. Подробнее —
+[[DFDEV-2561 Список сделок — рабочее место менеджера]].
 
 ## Offer — `offer`
 
@@ -59,10 +74,12 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
 - `technical_parameters` (JSONB), `tariffs` (JSONB) — тех. параметры и тарифы бланка заказа.
   Тариф хранит присланные клиентом `pk`, `quantity`, `price` (цена продажи),
   `partner_client_price` (цена конечного потребителя), `group_code` и рассчитанные
-  сервером `base_price`, `base_price_source`, `discount_percent` — по ним route builder
-  выбирает скидочный маршрут. `base_price_source` — `classifier` (прайс) либо
-  `client_price` (персональная цена клиента, тариф продан не ниже её и согласования не
-  требует, см. [[Discount Base and Personal Price]]).
+  сервером `base_price`, `base_price_source`, `discount_percent`. Эти поля нужны legacy
+  процентной модели. В режиме `price_levels` клиент не присылает и Offer не хранит
+  доверенную шкалу GPL/L1–L3: сервер загружает её из service-catalog перед перестроением,
+  проверяет право на ценовой диапазон и фиксирует использованные значения в snapshot
+  версии согласования. См. [[Discount Base and Personal Price]] и
+  [[DFDEV-2555 Уровни цен тарифов]].
 - `created_by`, `updated_by?`.
 - Связи: `deal`, `order` (0..1, `OfferOrder`). Offer-level связи с `approval` больше
   нет — согласование принадлежит сделке.
@@ -81,8 +98,10 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
   (`1` — legacy, `2` — staged). Ограничения: `UNIQUE(deal_id, version)` и partial
   unique index по `deal_id WHERE is_current` — у сделки не больше одной текущей версии.
 - Предмет согласования: `subject_snapshot` (JSONB со сделкой и всеми офферами),
-  `subject_hash`, `route_context` (триггеры маршрута, максимальная скидка и её источник,
-  версии builder-а и `STAGE_ORDER`).
+  `subject_hash`, `route_context` (выбранная `discount_model`, триггеры маршрута,
+  версии builder-а и `STAGE_ORDER`). Для `legacy_percent` контекст содержит максимальную
+  процентную скидку и источник. Для `price_levels` snapshot содержит серверный блок
+  `pricing` с GPL/L1–L3, сравниваемой ценой, персональной ценой и рассчитанным уровнем.
 - `status` (`ApprovalStatus`):
   `draft` | `pending` | `blocked` | `answered` | `canceled` | `not_required`.
 - `decision?` (`ApprovalDecision`): `approve` | `reject`; `decision_comment?`.
@@ -96,8 +115,10 @@ LkmUser / LkmRole / LkmPermission  (ролевая модель ЛКМ)
   `email_token_expires_at`) больше нет — сняты contract-фазой Ticket 15. Строки старых
   согласований остались и читаются через `GET /deals/{deal_id}/approvals`.
 - Связи: `stages` (сортировка по `position`), `events` (сортировка по `sequence`).
-- Маршрут строится по максимальной скидке среди всех offers сделки; особые условия
-  любого offer добавляют обязательную цепочку `product_owner → lawyer`.
+- Маршрут строится либо по максимальной процентной скидке (`legacy_percent`), либо по
+  максимальному требуемому уровню GPL/L1–L3 (`price_levels`) среди всех offers сделки.
+  Особые условия любого offer независимо добавляют обязательную цепочку
+  `product_owner → lawyer`; предтариф независимо требует финансового директора.
 - После `start` snapshot неизменяем; повторное согласование создаёт следующую version,
   предыдущая помечается `is_current=false`.
 

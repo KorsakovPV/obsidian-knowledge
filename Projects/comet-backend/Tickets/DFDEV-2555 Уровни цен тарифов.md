@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-09-23
-updated: 2026-09-24
+updated: 2026-09-28
 tags: [project, ticket, approval, pricing, tariffs, service-catalog]
 ---
 
@@ -14,12 +14,18 @@ tags: [project, ticket, approval, pricing, tariffs, service-catalog]
 
 ## Статус
 
-Реализовано локально в ветке `DFDEV-2555`, без commit/push. Добавлены переключатель
-модели, каталог v2, расчёт GPL/L1–L3, role guard, новый маршрут, pricing snapshot и
-настройки rollout: test — `price_levels`, stage/prod — `legacy_percent`.
+Реализовано в текущем коде репозитория:
 
-Код проходит проектные pytest, isort, black, flake8, bandit и mypy; перед публикацией
-ветки остаётся обычный MR-процесс.
+- `DiscountModel` и `APPROVAL_WORKFLOW_DISCOUNT_MODEL`;
+- `GET /api/v2/tariffs` с проверенной шкалой `price_levels`;
+- расчёт GPL/L1–L3, персональные ворота и role guard при записи оффера;
+- загрузка pricing context до DB-lock, новый маршрут и immutable pricing snapshot;
+- версионирование approval при смене модели;
+- конфигурация репозитория: test — `price_levels`, stage/production —
+  `legacy_percent`.
+
+Эта запись описывает состояние исходников и конфигурации в репозитории, а не факт
+выкладки конкретного commit на стенд.
 
 Полный журнал обсуждённых вопросов и ответов ведётся в
 [[Discount Base and Personal Price#Тикет DFDEV-2555]].
@@ -30,7 +36,10 @@ tags: [project, ticket, approval, pricing, tariffs, service-catalog]
 тарифа из service-catalog. Одновременно дать фронту отдельную версию тарифной ручки,
 которая возвращает те же данные, что текущая, плюс `price_levels`.
 
-## Что есть сейчас
+## Исходное состояние до реализации
+
+Раздел сохранён как контекст архитектурного решения; актуальное реализованное состояние
+перечислено выше и отражено в [[API]], [[Architecture]] и [[Domain Model]].
 
 ### Каталог
 
@@ -231,7 +240,10 @@ docstring новой функции расчёта ценового уровня
   сообщением «Не удалось получить актуальные цены тарифов. Попробуйте ещё раз позднее»;
   повтор операции инициирует пользователь.
 
-## План реализации
+## Реализованный план
+
+Пункты ниже сохранены как design record: по ним можно проверить границы решения и
+отсутствие неоговорённых fallback-механизмов.
 
 ### 1. Ввести переключатель модели скидок
 
@@ -468,12 +480,16 @@ Review потребовал явно спроектировать двухфаз
 snapshot и наблюдать fail-closed зависимость от service-catalog. Рекомендован постепенный
 rollout с feature flag и мониторингом upstream-блокировок.
 
-## Проверка текущей базы перед планом
+## Проверки реализации
 
-На 2026-09-23:
+Релевантное покрытие находится в:
 
-- релевантный pytest-набор: **93 passed**, 89 warnings;
-- `poetry run make check`: isort, black, flake8, bandit и mypy — **Passed**.
+- `tests/services/test_tariff_price_levels.py`;
+- `tests/services/test_catalog.py`;
+- `tests/services/test_approval_route_builder.py`;
+- `tests/services/test_approval_lifecycle.py`;
+- тестах create/update оффера и смены модели согласования.
 
-Проверки подтверждают только текущее состояние проекта; тестов новой логики пока нет,
-поскольку реализация DFDEV-2555 не начиналась.
+При этой синхронизации документации тесты не запускались: код проекта не менялся.
+Перед merge или продвижением модели обязательны `poetry run pytest` и
+`poetry run make check`.

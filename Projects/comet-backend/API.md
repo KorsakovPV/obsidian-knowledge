@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-06-25
-updated: 2026-09-24
+updated: 2026-09-29
 tags: [project, api, rest, fastapi]
 ---
 
@@ -9,8 +9,9 @@ tags: [project, api, rest, fastapi]
 
 #project
 
-Публичный HTTP-API [[Overview|comet-backend]]. Все ручки версионированы и собираются в
-`app/api/v1/v1_router.py`. Общий префикс — **`/api/v1`**. Swagger UI — на корне `/`.
+Публичный HTTP-API [[Overview|comet-backend]]. Основные доменные ручки собираются в
+`app/api/v1/v1_router.py` под префиксом **`/api/v1`**. Каталог тарифов с уровнями цен
+добавлен отдельно под **`/api/v2`**. Swagger UI — на корне `/`.
 
 Аутентификация — **Bearer JWT** (Keycloak) для всех путей, кроме «skipped» (см.
 [[Architecture]]). Ниже пути указаны относительно `/api/v1`.
@@ -92,7 +93,8 @@ Skip доступен только для optional stage, reassign — толь�
 | Метод | Путь | Назначение |
 |-------|------|-----------|
 | POST   | `/deals` | Создать сделку (необязательный `contract_id`, см. ниже) |
-| GET    | `/deals` | Список сделок (с фильтрами `DealFilters`) |
+| GET    | `/deals` | Страница сделок рабочего места менеджера |
+| GET    | `/deals/managers` | Менеджеры, назначенные хотя бы на одну сделку |
 | GET    | `/deals/{deal_id}` | Получить сделку |
 | PATCH  | `/deals/{deal_id}` | Обновить сделку (`contract_id` не принимается → 422) |
 | DELETE | `/deals/{deal_id}` | Удалить сделку |
@@ -102,6 +104,60 @@ Skip доступен только для optional stage, reassign — толь�
 | GET    | `/deals/{deal_id}/approvals?limit=20&offset=0` | История версий согласования сделки (без token-полей) |
 | POST   | `/deals/check_send_email` | ⚙️ Техническая: тест отправки письма |
 | POST   | `/deals/check_fetch_unseen_emails` | ⚙️ Техническая: тест чтения писем |
+
+### Список сделок рабочего места менеджера
+
+`GET /deals` возвращает `DealListPageSchema`, а не массив полных `DealSchema`:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+Фильтры: `contract_id`, `client_id`, `region_id`, `manager_id`, `seller`, `title`,
+`q`, `scope`, `sort`, `limit`, `offset`. `scope=all` — без ограничения владельцем;
+`scope=my` — сделки, где текущий LKM-пользователь является ответственным менеджером
+или последним подтверждённым редактором. Строковые `created_by`/`updated_by` для scope
+не используются. `q` объединяет поиск по названию сделки с поиском по названию/ИНН
+контрагента в Customers.
+
+Пагинация offset-based: `limit=20` по умолчанию, допустимо `1..100`; `offset=0` и
+не может быть отрицательным. `total` считается до применения limit/offset по тем же
+фильтрам. Сортировка по умолчанию — `updated_at:desc`, где `updated_at` берётся как
+`coalesce(updated_at, created_at)`. Допустимы `updated_at`, `created_at`, `number` с
+направлениями `asc`/`desc`; после основного ключа всегда идут стабильные tie-breaker
+`number` и `id` в том же направлении.
+
+Каждый `items[]` — облегчённый `DealListItemSchema`: без полных `offers`, вложений и
+`current_approval`, но с `approval_summary`, `actions` и обязательным `summary`.
+`summary` содержит число офферов, число офферов с локально созданным БЗ, общие суммы,
+детализацию flat rate / usage based / one time и
+`total_recurring_with_vat = total_flat_rate_with_vat + total_usage_based_with_vat`.
+Для пустой сделки все счётчики и суммы равны нулю.
+
+Плоские данные строки:
+
+- `client_title`, `client_inn` — live-обогащение из Customers; при сбое обычная выдача
+  остаётся доступной, поля равны `null`;
+- `manager: {id, name, email} | null` — ответственный из доверенного `manager_id`;
+- `last_change: {at, by_name}` — доверенные `last_changed_at` и пользователь, с
+  fallback на legacy `updated_at/created_at` и `updated_by/created_by`;
+- договоры, продукты и тарифы загружаются батчами для всей страницы, а не по строке.
+
+Если Customers недоступен именно во время фильтра `q`, запрос завершается upstream-
+ошибкой: молча искать только по названию сделки нельзя, иначе выдача была бы неполной.
+Сбой обязательного обогащения тарифов/продуктов классификатором отдаётся как
+`classifier_unavailable` (502).
+
+`GET /deals/managers` под тем же правом `view_deals` возвращает
+`[{"id", "name", "email"}]` только для пользователей, которые назначены менеджерами
+хотя бы одной сделки. Подробности реализации и границы следующих тикетов —
+[[DFDEV-2561 Список сделок — рабочее место менеджера]]. Детальная ручка
+`GET /deals/{deal_id}` по-прежнему возвращает полный `DealSchema`.
 
 `approval/revoke` с 24.08.2026 проверяет доступность действия на сервере (DFDEV-2264):
 отзыв разрешён, только пока согласование идёт (`pending`/`blocked`) и только держателю
@@ -272,6 +328,7 @@ Lock-соединения не берутся из основного CRUD-пу�
 |-------|------|-----------|-------|
 | GET | `/services` | Доступные услуги для ручного выбора тарифа | `view_kp` или `create_kp` |
 | GET | `/tariffs` | Опубликованные тарифы вне дерева продуктов | `view_kp` или `create_kp` |
+| GET | `/api/v2/tariffs` | Тарифы v1 плюс проверенная шкала `price_levels` | `view_kp` или `create_kp` |
 
 `GET /tariffs` требует `client_id` и поддерживает фильтры `concat_codes`,
 `services_names`, `services_pks`, `tariffs_names`, `pks`, а также `page` и `page_size`.
@@ -282,22 +339,21 @@ Lock-соединения не берутся из основного CRUD-пу�
 пагинации, поэтому `count` относится к опубликованному набору.
 
 Структурно битый ответ или недоступность классификатора возвращаются как 502
-`classifier_unavailable`. Текущая v1-схема ещё не отдаёт `price_levels`; отдельный
-`GET /api/v2/tariffs` с тем же контрактом плюс уровнями цен запланирован в
-[[DFDEV-2555 Уровни цен тарифов]]. В целевой логике GPL и L1–L3 будут сравниваться с
-`partner_client_price` — ценой конечного потребителя — и для DataFort, и для ВымпелКом;
-текущий процентный расчёт по `price` до реализации тикета не меняется. Право сохранить
-скидочную цену будет проверяться при создании/изменении оффера: Pre-sale доступен диапазон
-L1, руководителю Pre-sale — L1–L3. Это право ввода цены, а не approval-стадия; маршрут
-особых условий остаётся независимым. Вся новая логика управляется
-`APPROVAL_WORKFLOW_DISCOUNT_MODEL`: на test используется `price_levels`, на stage и
-production — `legacy_percent`; частичное смешивание расчёта маршрута и role guard не
-допускается. Для v2 пустая, неполная или неупорядоченная шкала уровней возвращает
-**409** `tariff_price_levels_invalid`, а timeout, 5xx и структурно битый ответ
-service-catalog — **502** `classifier_unavailable`. Перед отправкой сделки сервер повторно
-получает вместе с уровнями актуальную персональную цену клиента. Автоматического retry
-пока нет: при `classifier_unavailable` пользователь получает сообщение «Не удалось
-получить актуальные цены тарифов. Попробуйте ещё раз позднее» и повторяет операцию вручную.
+`classifier_unavailable`. V1 не отдаёт `price_levels`; реализованный
+`GET /api/v2/tariffs` сохраняет query-контракт, права, фильтрацию и пагинацию v1, но
+возвращает для каждой позиции проверенную шкалу GPL/L1–L3. Пустая, неполная или
+неупорядоченная шкала даёт **409** `tariff_price_levels_invalid`; timeout, 5xx и
+структурно битый ответ service-catalog — **502** `classifier_unavailable`.
+
+В режиме `price_levels` GPL и L1–L3 сравниваются с `partner_client_price` — ценой
+конечного потребителя — и для DataFort, и для ВымпелКом. При создании/изменении оффера
+сервер проверяет доступный пользователю диапазон: Pre-sale может сохранить L1,
+руководитель Pre-sale — L1–L3. Это право ввода цены, а не approval-стадия. Перед
+перестроением маршрута сервер загружает актуальные уровни и персональную цену до DB-lock,
+а использованные значения сохраняет в snapshot. Модель целиком выбирается через
+`APPROVAL_WORKFLOW_DISCOUNT_MODEL`: в конфигурации репозитория test — `price_levels`,
+stage и production — `legacy_percent`. Автоматического retry или fallback между моделями
+внутри запроса нет. Подробнее — [[DFDEV-2555 Уровни цен тарифов]].
 
 ## Client prices (клиентские цены) — `/client-prices`
 

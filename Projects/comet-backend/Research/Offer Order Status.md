@@ -1,7 +1,7 @@
 ---
 project: comet-backend
 created: 2026-08-05
-updated: 2026-08-11
+updated: 2026-09-28
 source: docs/offer_order_status.md
 tags: [project, research, offers, orders, itsm, status, order-processing]
 ---
@@ -14,7 +14,6 @@ tags: [project, research, offers, orders, itsm, status, order-processing]
 [[Architecture]], [[Deal Contract Selection]], [[Preapproved Order Integration]].
 
 Статусы оффера: КП-фаза и заказ в ITSM (DFDEV-2200 / DFDEV-2052, этап 4).
-
 
 Ответ оффера отдаёт два независимых статуса: **КП-фаза** — где предложение находится в
 работе менеджера, и **статус заказа** — что с бланком заказа происходит в ITSM. Первый
