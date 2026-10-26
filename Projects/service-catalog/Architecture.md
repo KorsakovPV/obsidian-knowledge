@@ -1,10 +1,13 @@
 ---
 project: service-catalog
 created: 2026-08-20
+updated: 2026-10-21
 tags: [project, architecture, django]
 ---
 
 # Architecture
+
+#project
 
 Точка входа — `backend/manage.py`, настройки `backend/app/settings.py`
 (наследуются от `garpixcms.settings`), корневой роутер `backend/app/urls.py`.
@@ -41,6 +44,8 @@ ServiceBusiness (LOB)
   `ServiceElement` и на `TariffElement`, даты старта/завершения, `access_period`
   (срок подключения), `related_tariffs` (M2M на себя — связанные тарифы),
   `location` (M2M на `Location`), `num_clients`, `is_price_protected`,
+  `price_protection_reason`, служебный nullable `cost_price_present` и связанные
+  `TariffPriceLevel` с уникальной парой `(tariff, level)` и ценой `numeric(14,6)`,
   `price_code` и вычисляемый составной код (`current_concated_code`,
   `update_price_code`, `get_tariff_with_max_price_code`).
 - `TariffElement` — то, что тарифицируется: `unit` (`Unit`),
@@ -53,6 +58,16 @@ ServiceBusiness (LOB)
 - `ResourceMapping` + `TariffToResources` — привязка тарифа к ресурсам с
   множителем (уникальная пара тариф-ресурс).
 - `Location` — локации предоставления услуги.
+
+В черновиках отсутствие минимальной цены хранится как ноль в
+`TariffElement.cost_price` вместе с `Tariff.cost_price_present=false`. Для
+старых строк с `NULL` свойство `cost_price_is_present` выводит значение из
+сырой цены, статуса черновика и типа SOR; положительная сырая цена имеет
+приоритет над устаревшим `false`. Запись черновика и его уровней в
+`DraftTariffViewSet` атомарна в БД классификатора. После остановки старых
+экземпляров командой `backfill_cost_price_present` заполняются исторические
+маркеры; ограничение `NOT NULL` пока не добавлено. Проверка полной шкалы при
+прямой публикации управляется `ENFORCE_DRAFT_PRICE_LEVELS_ON_PUBLISH`.
 
 ### Продукты и тех-параметры
 
